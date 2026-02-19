@@ -33,7 +33,7 @@ $USELIBRARY:'RhoSigma/Simplebuffer'
 
 _TITLE "Simplebuffers binary data handling"
 
-'--- Find the root path to the example's source folder.
+'--- Find the root of the program's source folder.
 '-----
 IF _FILEEXISTS("BinaryData.bas") THEN
     root$ = ""
@@ -44,8 +44,9 @@ ELSE
     IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
         root$ = qbfo$ + "\libraries\examples\RhoSigma\Simplebuffer\"
     ELSE
-        PRINT "Can't locate required assets, please run again and select"
-        PRINT "your QB64-PE folder when ask for it."
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
         END
     END IF
 END IF

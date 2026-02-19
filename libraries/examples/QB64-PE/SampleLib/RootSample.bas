@@ -13,18 +13,21 @@ $IF VERSION < 4.3.0 THEN
 $END IF
 
 'The example wants to load and display the QB64-PE.png image from the
-'libraries\descriptors\QB64-PE folder.
+'libraries\descriptors\QB64-PE folder. Next we try to figure out how to
+'get there depending on the compile location.
 
 '--- Find the assets depending on the execuatable's location.
 '-----
+'The next line must check for the exact source file name, i.e. the name
+'and the use of upper/lower case must match, so that it works on Linux.
 IF _FILEEXISTS("RootSample.bas") THEN
-    'The program was compiled to its "Source Folder", in this case that
+    'The program was compiled to its "Source Folder", in our case that
     'is libraries\examples\QB64-PE\SampleLib, hence we need to go back
     'three folders first and then forward to our wanted assets.
     root$ = "..\..\..\descriptors\QB64-PE\"
 ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
     'The program was compiled to the QB64-PE folder (default if no other
-    'was specified), hence we can directly go to our wanted assets.
+    'was specified), hence we can directly go forward to our wanted assets.
     root$ = "libraries\descriptors\QB64-PE\"
 ELSE
     'The program was compiled to a user set default location, no way to
@@ -32,12 +35,13 @@ ELSE
     'user to give us a hint.
     qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
     IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
-        'Now we can set our root building on the QB64-PE folder as above.
+        'Now we can set our path building on the QB64-PE folder as above.
         root$ = qbfo$ + "\libraries\descriptors\QB64-PE\"
     ELSE
         'We give up.
-        PRINT "Can't locate required assets, please run again and select"
-        PRINT "your QB64-PE folder when ask for it."
+        PRINT
+        PRINT "ERROR: Can't locate required assets, please run again and"
+        PRINT "       select your QB64-PE folder when ask for it."
         END
     END IF
 END IF
@@ -45,7 +49,7 @@ END IF
 '--- Do stuff with our located assets.
 '-----
 SCREEN _NEWIMAGE(640, 400, 32)
-i& = _LOADIMAGE(root$ + "QB64-PE.png", 32)
+i& = _LOADIMAGE(root$ + "QB64-PE.png", 32) 'using root$ to access the image
 IF i& < -1 THEN
     _PUTIMAGE (270, 150), i&
     _FREEIMAGE i&

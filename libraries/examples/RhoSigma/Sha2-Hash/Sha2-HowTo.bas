@@ -25,7 +25,7 @@ $END IF
 
 $USELIBRARY:'RhoSigma/Sha2-Hash'
 
-'--- Find the root path to the example's source folder.
+'--- Find the root of the program's source folder.
 '-----
 IF _FILEEXISTS("Sha2-HowTo.bas") THEN
     root$ = ""
@@ -36,8 +36,9 @@ ELSE
     IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
         root$ = qbfo$ + "\libraries\examples\RhoSigma\Sha2-Hash\"
     ELSE
-        PRINT "Can't locate required assets, please run again and select"
-        PRINT "your QB64-PE folder when ask for it."
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
         END
     END IF
 END IF
@@ -47,8 +48,8 @@ END IF
 _TITLE "SHA2-HowTo Output"
 COLOR 9: PRINT VersionSha2HowTo$: COLOR 7
 
-'--- Read the file PD-Unlicense.txt from the SHA2-Hash\license folder into
-'--- a string and then pass it to the FUNCTION GetStringSHA2$().
+'--- Read the program's source file into a string
+'--- and then pass it to the FUNCTION GetStringSHA2$().
 '-----
 file$ = "Sha2-HowTo.bas"
 OPEN root$ + file$ FOR BINARY AS #1
