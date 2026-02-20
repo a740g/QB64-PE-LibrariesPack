@@ -15,7 +15,7 @@
 '|                                                                   |
 '| == Note that this demo is considered "unfinished" yet, as there's |
 '| == no option to enter the F(x,y), you can just type it in here in |
-'| == the source file around line numbers 101-105.                   |
+'| == the source file around line numbers 103-107.                   |
 '|                                                                   |
 '+-------------------------------------------------------------------+
 '| Done by RhoSigma, R.Heyder, provided AS IS, use at your own risk. |
@@ -35,6 +35,8 @@ scr& = _NEWIMAGE(1024, 768, 256)
 SCREEN scr&
 _DELAY 0.2
 _TITLE "3D Function Plotter"
+_DELAY 0.2
+_SCREENMOVE _MIDDLE
 
 '--- Init the color palette.
 '-----

@@ -75,6 +75,7 @@ END IF
 '-----
 getChoice:
 _TITLE "Image processing Demo"
+_DELAY 0.2: _SCREENMOVE _MIDDLE
 COLOR 9: PRINT VersionImgProcDemo$: COLOR 7
 PRINT
 PRINT "How would you like this Demo to perform?": PRINT
@@ -92,7 +93,7 @@ SELECT CASE uc%
         righ% = -1: bott% = -1
     CASE 2
         _TITLE "This is the mask Image, press any key..."
-        SCREEN mImg&: SLEEP
+        SCREEN mImg&: _DELAY 0.2: _SCREENMOVE _MIDDLE: SLEEP
         mask& = mImg&
         left% = -1: topp% = -1
         righ% = -1: bott% = -1
@@ -102,7 +103,7 @@ SELECT CASE uc%
         righ% = 820: bott% = -1
     CASE 4
         _TITLE "This is the mask Image, press any key..."
-        SCREEN mImg&: SLEEP
+        SCREEN mImg&: _DELAY 0.2: _SCREENMOVE _MIDDLE: SLEEP
         mask& = mImg&
         left% = 250: topp% = 70
         righ% = 820: bott% = -1

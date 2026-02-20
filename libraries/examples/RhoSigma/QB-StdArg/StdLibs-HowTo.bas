@@ -105,7 +105,7 @@ VPrintF "The %s has \x22%hd\x22 degrees.\n", c$
 '--- This must not be done in reverse order, but looks nicer here.
 '-----
 FreeArgs c$
-'NOTE: b$ was already freed after use in line 87
+'NOTE: b$ was already freed after use in line 93
 FreeArgs a$
 
 '--- And here comes some date/time formatting, as you can see in the
