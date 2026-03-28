@@ -1,0 +1,372 @@
+ANIM MANAGER API REFERENCE
+==========================
+
+This reference is based on the current anim_manager.bi / anim_manager.bm manager layer.
+The manager is a unified dispatcher for these formats:
+- APNG
+- GIF89a
+- FLI
+- FLC
+- WebP
+
+GENERAL NOTES
+-------------
+- AnimUpdate(animId) or AnimUpdateAll() must be called inside the main loop.
+- AnimDraw(x, y, animId) draws at native size.
+- AnimDrawWindow(x1, y1, x2, y2, animId) stretches to the target box and does NOT preserve aspect ratio.
+- AnimSaveFrame(animId, frameIndex) creates a default PNG file name.
+- AnimSaveFrameTo(animId, frameIndex, fileName) saves to an explicit PNG file name.
+
+PUBLIC CONSTANTS
+----------------
+ANIM_FMT_NONE = 0
+    No recognized animation format.
+
+ANIM_FMT_APNG = 1
+    APNG format.
+
+ANIM_FMT_GIF89A = 2
+    GIF89a format.
+
+ANIM_FMT_FLI = 3
+    Autodesk FLI format.
+
+ANIM_FMT_FLC = 4
+    Autodesk FLC format.
+
+ANIM_FMT_WEBP = 5
+    Animated WebP format.
+
+ANIM_LOOP_FILE_DEFAULT = -2
+    Use the loop behavior stored in the file, if the backend supports it.
+
+ANIM_LOOP_FOREVER = -1
+    Loop forever.
+
+ANIM_LOOP_ONCE = 0
+    Play once and stop.
+
+PUBLIC COMMANDS
+---------------
+
+1) AnimOpen
+Syntax:
+    animId = AnimOpen(fileName)
+
+Returns:
+    Long
+
+Description:
+    Opens an animation file using automatic format detection.
+    Returns a manager animation ID on success.
+    Returns -1 on failure.
+
+Example:
+    animId = AnimOpen("APPLE.FLI")
+
+
+2) AnimOpenLimit
+Syntax:
+    animId = AnimOpenLimit(fileName, maxWidth, maxHeight, maxFrames)
+
+Returns:
+    Long
+
+Description:
+    Opens an animation file with safety limits.
+    The exact limit behavior depends on the backend.
+    Use this when you want to reject files that exceed size or frame count limits.
+    Returns a manager animation ID on success.
+    Returns -1 on failure.
+
+Example:
+    animId = AnimOpenLimit("001.webp", 1920, 1080, 1000)
+
+
+3) AnimProbe
+Syntax:
+    AnimProbe fileName, ok, formatId, widthPx, heightPx, frameCount
+
+Parameters:
+    fileName    As String   Input file name
+    ok          As Integer  Output success flag
+    formatId    As Long     Output format ID
+    widthPx     As Long     Output width in pixels
+    heightPx    As Long     Output height in pixels
+    frameCount  As Long     Output number of frames
+
+Description:
+    Probes a file without opening it as a managed live animation object.
+    Detects the format and returns basic metadata.
+    ok = 0 means failure.
+    ok <> 0 means success.
+
+Example:
+    AnimProbe "BALLOON.FLC", ok, formatId, widthPx, heightPx, frameCount
+
+
+4) AnimFree
+Syntax:
+    AnimFree animId
+
+Description:
+    Closes one animation and releases its resources.
+    Invalid IDs are ignored.
+
+
+5) AnimFreeAll
+Syntax:
+    AnimFreeAll
+
+Description:
+    Closes all currently opened manager animations and releases all resources.
+
+
+6) AnimStart
+Syntax:
+    AnimStart animId
+
+Description:
+    Starts playback of the animation.
+    Also refreshes manager runtime state after the backend call.
+
+
+7) AnimStop
+Syntax:
+    AnimStop animId
+
+Description:
+    Stops playback of the animation.
+    The exact final position depends on the backend.
+
+
+8) AnimPause
+Syntax:
+    AnimPause animId
+
+Description:
+    Pauses playback without freeing the animation.
+
+
+9) AnimResume
+Syntax:
+    AnimResume animId
+
+Description:
+    Resumes playback after a pause.
+
+
+10) AnimSetLoop
+Syntax:
+    AnimSetLoop animId, loopMode
+
+Parameters:
+    animId     As Long
+    loopMode   As Long
+
+Description:
+    Sets loop behavior for the animation.
+    Typical values:
+        ANIM_LOOP_FILE_DEFAULT
+        ANIM_LOOP_FOREVER
+        ANIM_LOOP_ONCE
+
+Example:
+    AnimSetLoop animId, ANIM_LOOP_FOREVER
+
+
+11) AnimUpdate
+Syntax:
+    AnimUpdate animId
+
+Description:
+    Advances one managed animation according to its timing.
+    Call this from the main loop.
+
+
+12) AnimUpdateAll
+Syntax:
+    AnimUpdateAll
+
+Description:
+    Advances all opened managed animations.
+    Useful when multiple animations are active at once.
+
+
+13) AnimDraw
+Syntax:
+    AnimDraw x, y, animId
+
+Parameters:
+    x       As Long
+    y       As Long
+    animId  As Long
+
+Description:
+    Draws the current frame at native size with the top-left corner at (x, y).
+    This does not scale the animation.
+
+
+14) AnimDrawWindow
+Syntax:
+    AnimDrawWindow x1, y1, x2, y2, animId
+
+Parameters:
+    x1, y1, x2, y2 As Long
+    animId         As Long
+
+Description:
+    Draws the current frame stretched into the rectangle defined by
+    (x1, y1) to (x2, y2).
+    Aspect ratio is NOT preserved automatically.
+
+
+15) AnimLen
+Syntax:
+    frameCount = AnimLen(animId)
+
+Returns:
+    Long
+
+Description:
+    Returns the total number of frames.
+    Returns 0 for an invalid animation ID.
+
+
+16) AnimWidth
+Syntax:
+    widthPx = AnimWidth(animId)
+
+Returns:
+    Long
+
+Description:
+    Returns the animation width in pixels.
+    Returns 0 for an invalid animation ID.
+
+
+17) AnimHeight
+Syntax:
+    heightPx = AnimHeight(animId)
+
+Returns:
+    Long
+
+Description:
+    Returns the animation height in pixels.
+    Returns 0 for an invalid animation ID.
+
+
+18) AnimGetPos
+Syntax:
+    frameIndex = AnimGetPos(animId)
+
+Returns:
+    Long
+
+Description:
+    Returns the current frame index.
+    Returns -1 for an invalid animation ID.
+    The value is refreshed from the backend before it is returned.
+
+
+19) AnimIsPlaying
+Syntax:
+    playingFlag = AnimIsPlaying(animId)
+
+Returns:
+    Integer
+
+Description:
+    Returns the playback state.
+    0 means not playing.
+    Non-zero means playing.
+
+
+20) AnimFormat
+Syntax:
+    formatId = AnimFormat(animId)
+
+Returns:
+    Long
+
+Description:
+    Returns the manager format ID for the animation.
+    Returns ANIM_FMT_NONE for an invalid animation ID.
+
+
+21) AnimValid
+Syntax:
+    ok = AnimValid(animId)
+
+Returns:
+    Integer
+
+Description:
+    Checks whether a manager animation ID is valid.
+    Returns 0 if invalid.
+    Returns non-zero if valid.
+
+
+22) AnimError
+Syntax:
+    errText = AnimError(animId)
+
+Returns:
+    String
+
+Description:
+    Returns the stored manager error text for a slot.
+    Returns an empty string if there is no stored message or if the ID is out of range.
+    Note: the current manager mainly stores manager-level open errors.
+
+
+23) AnimSaveFrame
+Syntax:
+    ok = AnimSaveFrame(animId, frameIndex)
+
+Returns:
+    Integer
+
+Description:
+    Saves one frame to a PNG file using an automatically generated name.
+    The generated name is:
+        originalBaseName + "_frame_" + sixDigitFrameNumber + ".png"
+
+Example:
+    BALLOON.FLC -> BALLOON_frame_000012.png
+
+
+24) AnimSaveFrameTo
+Syntax:
+    ok = AnimSaveFrameTo(animId, frameIndex, fileName)
+
+Returns:
+    Integer
+
+Description:
+    Saves one frame to a PNG file using the exact output file name you provide.
+
+Example:
+    ok = AnimSaveFrameTo(animId, 25, "shot_0025.png")
+
+
+PRACTICAL MINIMAL LOOP
+----------------------
+    animId = AnimOpen("APPLE.FLI")
+    If animId >= 0 Then
+        AnimSetLoop animId, ANIM_LOOP_FOREVER
+        AnimStart animId
+
+        Do
+            AnimUpdate animId
+            Cls
+            AnimDraw 100, 80, animId
+            _Display
+            _Limit 60
+        Loop Until _KeyHit = 27
+
+        AnimFree animId
+    End If
+
+END OF REFERENCE

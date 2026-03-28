@@ -1,0 +1,595 @@
+
+
+
+Function AnimOpen& (fileName As String)
+    AnimOpen = AnimOpenLimit(fileName, 0, 0, 0)
+End Function
+
+Function AnimOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long, maxFrames As Long)
+    Dim slotIndex As Long
+    Dim formatId As Long
+    Dim backendId As Long
+
+    AnimOpenLimit = -1
+    backendId = -1
+
+    If _FileExists(fileName) = 0 Then Exit Function
+
+    formatId = AnimDetectFormatFromFile(fileName)
+    If formatId = ANIM_FMT_NONE Then Exit Function
+
+    slotIndex = AnimAllocSlot
+    AnimItems(slotIndex).Used = -1
+    AnimItems(slotIndex).FormatId = formatId
+    AnimItems(slotIndex).BackendId = -1
+    AnimItems(slotIndex).WidthPx = 0
+    AnimItems(slotIndex).HeightPx = 0
+    AnimItems(slotIndex).FrameCount = 0
+    AnimItems(slotIndex).CurrentFrame = 0
+    AnimItems(slotIndex).Playing = 0
+    AnimItems(slotIndex).LoopMode = ANIM_LOOP_FILE_DEFAULT
+    AnimFileNames(slotIndex) = fileName
+    AnimErrorTexts(slotIndex) = ""
+
+    Select Case formatId
+        Case ANIM_FMT_APNG
+            backendId = ApngOpenLimit(fileName, maxWidth, maxHeight, maxFrames)
+
+        Case ANIM_FMT_GIF89A
+            backendId = Gif89aOpenLimit(fileName, maxWidth, maxHeight, maxFrames)
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            backendId = FlicOpenLimit(fileName, maxWidth, maxHeight, maxFrames)
+
+        Case ANIM_FMT_WEBP
+            backendId = WebPAnimOpenLimit(fileName, maxWidth, maxHeight, maxFrames)
+    End Select
+
+    If backendId < 0 Then
+        AnimSetError slotIndex, "AnimOpenLimit: backend open failed"
+        AnimReleaseSlot slotIndex
+        Exit Function
+    End If
+
+    AnimItems(slotIndex).BackendId = backendId
+    AnimSyncStaticMeta slotIndex
+    AnimSyncRuntimeMeta slotIndex
+    AnimOpenLimit = slotIndex
+End Function
+
+Sub AnimProbe (fileName As String, ok As Integer, formatId As Long, widthPx As Long, heightPx As Long, frameCount As Long)
+    Dim detectedFormat As Long
+    Dim tempFlag As Integer
+
+    ok = 0
+    formatId = ANIM_FMT_NONE
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+    tempFlag = 0
+
+    If _FileExists(fileName) = 0 Then Exit Sub
+
+    detectedFormat = AnimDetectFormatFromFile(fileName)
+    If detectedFormat = ANIM_FMT_NONE Then Exit Sub
+
+    formatId = detectedFormat
+
+    Select Case detectedFormat
+        Case ANIM_FMT_APNG
+            ApngProbe fileName, ok, tempFlag, widthPx, heightPx, frameCount
+
+        Case ANIM_FMT_GIF89A
+            Gif89aProbe fileName, ok, tempFlag, widthPx, heightPx, frameCount
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicProbe fileName, ok, formatId, widthPx, heightPx, frameCount
+
+        Case ANIM_FMT_WEBP
+            WebPAnimProbe fileName, ok, widthPx, heightPx, frameCount
+    End Select
+End Sub
+
+Sub AnimFree (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngClose AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aClose AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicClose AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimClose AnimItems(animId).BackendId
+    End Select
+
+    AnimReleaseSlot animId
+End Sub
+
+Sub AnimFreeAll ()
+    Dim i As Long
+
+    For i = 0 To UBound(AnimItems)
+        If AnimItems(i).Used Then AnimFree i
+    Next i
+End Sub
+
+Sub AnimStart (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngPlay AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aPlay AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicStart AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimPlay AnimItems(animId).BackendId
+    End Select
+
+    AnimSyncRuntimeMeta animId
+End Sub
+
+Sub AnimStop (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngStop AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aStop AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicStop AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimStop AnimItems(animId).BackendId
+    End Select
+
+    AnimSyncRuntimeMeta animId
+End Sub
+
+Sub AnimPause (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngPause AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aPause AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicPause AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimPause AnimItems(animId).BackendId
+    End Select
+
+    AnimSyncRuntimeMeta animId
+End Sub
+
+Sub AnimResume (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngResume AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aResume AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicResume AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimResume AnimItems(animId).BackendId
+    End Select
+
+    AnimSyncRuntimeMeta animId
+End Sub
+
+Sub AnimSetLoop (animId As Long, loopMode As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    AnimItems(animId).LoopMode = loopMode
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngSetLoop AnimItems(animId).BackendId, loopMode
+
+        Case ANIM_FMT_GIF89A
+            Gif89aSetLoop AnimItems(animId).BackendId, loopMode
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicSetLoop AnimItems(animId).BackendId, loopMode
+
+        Case ANIM_FMT_WEBP
+            WebPAnimSetLoop AnimItems(animId).BackendId, loopMode
+    End Select
+End Sub
+
+Sub AnimUpdate (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngUpdate AnimItems(animId).BackendId
+
+        Case ANIM_FMT_GIF89A
+            Gif89aUpdate AnimItems(animId).BackendId
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicUpdate AnimItems(animId).BackendId
+
+        Case ANIM_FMT_WEBP
+            WebPAnimUpdate AnimItems(animId).BackendId
+    End Select
+
+    AnimSyncRuntimeMeta animId
+End Sub
+
+Sub AnimUpdateAll ()
+    Dim i As Long
+
+    For i = 0 To UBound(AnimItems)
+        If AnimItems(i).Used Then AnimUpdate i
+    Next i
+End Sub
+
+Sub AnimDraw (x As Long, y As Long, animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngDraw AnimItems(animId).BackendId, x, y
+
+        Case ANIM_FMT_GIF89A
+            Gif89aDraw AnimItems(animId).BackendId, x, y
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicDraw AnimItems(animId).BackendId, x, y
+
+        Case ANIM_FMT_WEBP
+            WebPAnimDraw AnimItems(animId).BackendId, x, y
+    End Select
+End Sub
+
+Sub AnimDrawWindow (x1 As Long, y1 As Long, x2 As Long, y2 As Long, animId As Long)
+    Dim boxWidth As Long
+    Dim boxHeight As Long
+    Dim N As Long
+
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    boxWidth = AnimBoxWidth(x1, x2)
+    boxHeight = AnimBoxHeight(y1, y2)
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            ApngDrawStretch AnimItems(animId).BackendId, x1, y1, boxWidth, boxHeight
+
+        Case ANIM_FMT_GIF89A
+            Gif89aDrawStretch AnimItems(animId).BackendId, x1, y1, boxWidth, boxHeight
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            FlicDrawStretch AnimItems(animId).BackendId, x1, y1, boxWidth, boxHeight
+
+        Case ANIM_FMT_WEBP
+            WebPAnimDrawStretch AnimItems(animId).BackendId, x1, y1, boxWidth, boxHeight
+    End Select
+End Sub
+
+Function AnimLen& (animId As Long)
+    AnimLen = 0
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimLen = AnimItems(animId).FrameCount
+End Function
+
+Function AnimWidth& (animId As Long)
+    AnimWidth = 0
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimWidth = AnimItems(animId).WidthPx
+End Function
+
+Function AnimHeight& (animId As Long)
+    AnimHeight = 0
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimHeight = AnimItems(animId).HeightPx
+End Function
+
+Function AnimGetPos& (animId As Long)
+    AnimGetPos = -1
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimSyncRuntimeMeta animId
+    AnimGetPos = AnimItems(animId).CurrentFrame
+End Function
+
+Function AnimIsPlaying% (animId As Long)
+    AnimIsPlaying = 0
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimSyncRuntimeMeta animId
+    AnimIsPlaying = AnimItems(animId).Playing
+End Function
+
+Function AnimFormat& (animId As Long)
+    AnimFormat = ANIM_FMT_NONE
+    If AnimValid(animId) = 0 Then Exit Function
+    AnimFormat = AnimItems(animId).FormatId
+End Function
+
+Function AnimValid% (animId As Long)
+    AnimValid = 0
+    If animId < 0 Then Exit Function
+    If animId > UBound(AnimItems) Then Exit Function
+    If AnimItems(animId).Used = 0 Then Exit Function
+    If AnimItems(animId).BackendId < 0 Then Exit Function
+    AnimValid = -1
+End Function
+
+Function AnimError$ (animId As Long)
+    AnimError = ""
+    If animId < 0 Or animId > UBound(AnimErrorTexts) Then Exit Function
+    AnimError = AnimErrorTexts(animId)
+End Function
+
+Function AnimSaveFrame% (animId As Long, frameIndex As Long)
+    Dim fileName As String
+
+    AnimSaveFrame = 0
+    If AnimValid(animId) = 0 Then Exit Function
+
+    fileName = AnimMakeDefaultFrameFileName(animId, frameIndex)
+    If Len(fileName) = 0 Then Exit Function
+
+    AnimSaveFrame = AnimSaveFrameTo(animId, frameIndex, fileName)
+End Function
+
+Function AnimSaveFrameTo% (animId As Long, frameIndex As Long, fileName As String)
+    AnimSaveFrameTo = 0
+    If AnimValid(animId) = 0 Then Exit Function
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            AnimSaveFrameTo = ApngSaveFrame(AnimItems(animId).BackendId, frameIndex, fileName)
+
+        Case ANIM_FMT_GIF89A
+            AnimSaveFrameTo = Gif89aSaveFrame(AnimItems(animId).BackendId, frameIndex, fileName)
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            AnimSaveFrameTo = FlicSaveFrame(AnimItems(animId).BackendId, frameIndex, fileName)
+
+        Case ANIM_FMT_WEBP
+            AnimSaveFrameTo = WebPAnimSaveFrame(AnimItems(animId).BackendId, frameIndex, fileName)
+    End Select
+End Function
+
+' =========================================================
+' Internal helpers
+' =========================================================
+
+Function AnimAllocSlot& ()
+    Dim i As Long
+
+    For i = 0 To UBound(AnimItems)
+        If AnimItems(i).Used = 0 Then
+            AnimAllocSlot = i
+            Exit Function
+        End If
+    Next i
+
+    ReDim _Preserve AnimItems(UBound(AnimItems) + 1) As AnimStore
+    ReDim _Preserve AnimFileNames(UBound(AnimFileNames) + 1) As String
+    ReDim _Preserve AnimErrorTexts(UBound(AnimErrorTexts) + 1) As String
+    AnimAllocSlot = UBound(AnimItems)
+End Function
+
+Sub AnimReleaseSlot (animId As Long)
+    If animId < 0 Or animId > UBound(AnimItems) Then Exit Sub
+
+    AnimItems(animId).Used = 0
+    AnimItems(animId).FormatId = ANIM_FMT_NONE
+    AnimItems(animId).BackendId = -1
+    AnimItems(animId).WidthPx = 0
+    AnimItems(animId).HeightPx = 0
+    AnimItems(animId).FrameCount = 0
+    AnimItems(animId).CurrentFrame = 0
+    AnimItems(animId).Playing = 0
+    AnimItems(animId).LoopMode = ANIM_LOOP_FILE_DEFAULT
+    AnimFileNames(animId) = ""
+    AnimErrorTexts(animId) = ""
+End Sub
+
+Sub AnimClearError (animId As Long)
+    If animId < 0 Or animId > UBound(AnimErrorTexts) Then Exit Sub
+    AnimErrorTexts(animId) = ""
+End Sub
+
+Sub AnimSetError (animId As Long, errText As String)
+    If animId < 0 Or animId > UBound(AnimErrorTexts) Then Exit Sub
+    AnimErrorTexts(animId) = errText
+End Sub
+
+Function AnimMakeDefaultFrameFileName$ (animId As Long, frameIndex As Long)
+    Dim srcName As String
+    Dim dotAt As Long
+    Dim baseName As String
+    Dim frameText As String
+
+    AnimMakeDefaultFrameFileName = ""
+    If AnimValid(animId) = 0 Then Exit Function
+
+    srcName = AnimFileNames(animId)
+    If Len(srcName) = 0 Then Exit Function
+
+    dotAt = _InStrRev(srcName, ".")
+    If dotAt > 0 Then
+        baseName = Left$(srcName, dotAt - 1)
+    Else
+        baseName = srcName
+    End If
+
+    frameText = LTrim$(Str$(frameIndex))
+    frameText = Right$("000000" + frameText, 6)
+    AnimMakeDefaultFrameFileName = baseName + "_frame_" + frameText + ".png"
+End Function
+
+Function AnimDetectFormatFromFile& (fileName As String)
+    Dim rawHead As String
+    Dim ff As Integer
+    Dim fileLen As Long
+    Dim sign8 As String
+    Dim sign6 As String
+    Dim fileExt As String
+    Dim ok As Integer
+    Dim flicFmt As Long
+    Dim widthPx As Long
+    Dim heightPx As Long
+    Dim frameCount As Long
+
+    AnimDetectFormatFromFile& = ANIM_FMT_NONE
+
+    If _FileExists(fileName) = 0 Then Exit Function
+
+    fileExt = LCase$(Right$(fileName, 4))
+
+    ff = FreeFile
+    Open fileName For Binary As #ff
+    fileLen = LOF(ff)
+
+    If fileLen <= 0 Then
+        Close #ff
+        Exit Function
+    End If
+
+    If fileLen >= 16 Then
+        rawHead = Space$(16)
+        Get #ff, 1, rawHead
+    Else
+        rawHead = Space$(fileLen)
+        Get #ff, 1, rawHead
+    End If
+
+    Close #ff
+
+    If Len(rawHead) >= 8 Then
+        sign8 = Left$(rawHead, 8)
+        If sign8 = Chr$(137) + "PNG" + Chr$(13) + Chr$(10) + Chr$(26) + Chr$(10) Then
+            AnimDetectFormatFromFile& = ANIM_FMT_APNG
+            Exit Function
+        End If
+    End If
+
+    If Len(rawHead) >= 6 Then
+        sign6 = Left$(rawHead, 6)
+        If sign6 = "GIF87a" Or sign6 = "GIF89a" Then
+            AnimDetectFormatFromFile& = ANIM_FMT_GIF89A
+            Exit Function
+        End If
+    End If
+
+    If fileExt = "webp" Then
+        AnimDetectFormatFromFile& = ANIM_FMT_WEBP
+        Exit Function
+    End If
+
+    If Len(rawHead) >= 12 Then
+        If Mid$(rawHead, 1, 4) = "RIFF" And Mid$(rawHead, 9, 4) = "WEBP" Then
+            AnimDetectFormatFromFile& = ANIM_FMT_WEBP
+            Exit Function
+        End If
+    End If
+
+    ok = 0
+    flicFmt = ANIM_FORMAT_NONE
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+
+    FlicProbe fileName, ok, flicFmt, widthPx, heightPx, frameCount
+
+    If ok Then
+        If flicFmt = ANIM_FORMAT_FLI Then
+            AnimDetectFormatFromFile& = ANIM_FMT_FLI
+            Exit Function
+        End If
+
+        If flicFmt = ANIM_FORMAT_FLC Then
+            AnimDetectFormatFromFile& = ANIM_FMT_FLC
+            Exit Function
+        End If
+    End If
+End Function
+
+Sub AnimSyncStaticMeta (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            AnimItems(animId).WidthPx = ApngWidth(AnimItems(animId).BackendId)
+            AnimItems(animId).HeightPx = ApngHeight(AnimItems(animId).BackendId)
+            AnimItems(animId).FrameCount = ApngFrameCount(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_GIF89A
+            AnimItems(animId).WidthPx = Gif89aWidth(AnimItems(animId).BackendId)
+            AnimItems(animId).HeightPx = Gif89aHeight(AnimItems(animId).BackendId)
+            AnimItems(animId).FrameCount = Gif89aFrameCount(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+           AnimItems(animId).WidthPx = FlicWidth(AnimItems(animId).BackendId)
+           AnimItems(animId).HeightPx = FlicHeight(AnimItems(animId).BackendId)
+           AnimItems(animId).FrameCount = FlicFrameCount(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_WEBP
+            AnimItems(animId).WidthPx = WebPAnimWidth(AnimItems(animId).BackendId)
+            AnimItems(animId).HeightPx = WebPAnimHeight(AnimItems(animId).BackendId)
+            AnimItems(animId).FrameCount = WebPAnimFrameCount(AnimItems(animId).BackendId)
+    End Select
+End Sub
+
+Sub AnimSyncRuntimeMeta (animId As Long)
+    If AnimValid(animId) = 0 Then Exit Sub
+
+    Select Case AnimItems(animId).FormatId
+        Case ANIM_FMT_APNG
+            AnimItems(animId).CurrentFrame = ApngCurrentFrame(AnimItems(animId).BackendId)
+            AnimItems(animId).Playing = ApngIsPlaying(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_GIF89A
+            AnimItems(animId).CurrentFrame = Gif89aCurrentFrame(AnimItems(animId).BackendId)
+            AnimItems(animId).Playing = Gif89aIsPlaying(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_FLI, ANIM_FMT_FLC
+            AnimItems(animId).CurrentFrame = FlicCurrentFrame(AnimItems(animId).BackendId)
+            AnimItems(animId).Playing = FlicIsPlaying(AnimItems(animId).BackendId)
+
+        Case ANIM_FMT_WEBP
+            AnimItems(animId).CurrentFrame = WebPAnimCurrentFrame(AnimItems(animId).BackendId)
+            AnimItems(animId).Playing = WebPAnimIsPlaying(AnimItems(animId).BackendId)
+    End Select
+End Sub
+
+Function AnimBoxWidth& (x1 As Long, x2 As Long)
+    AnimBoxWidth = x2 - x1 + 1
+End Function
+
+Function AnimBoxHeight& (y1 As Long, y2 As Long)
+    AnimBoxHeight = y2 - y1 + 1
+End Function
+
+'$Include:'anim_apng_backend.bm'
+'$Include:'anim_gif89a_backend.bm'
+'$Include:'anim_webp_backend.bm'
+'$Include:'anim_flic_backend_buffered.bm'
+
+

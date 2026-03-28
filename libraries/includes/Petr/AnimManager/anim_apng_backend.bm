@@ -1,0 +1,916 @@
+Function ApngOpen& (fileName As String)
+    Dim pngData As String
+    Dim sigText As String
+    Dim dataLen As Long
+    Dim ofs As Long
+    Dim chunkLen As Long
+    Dim chunkType As String
+    Dim chunkData As String
+    Dim rawChunk As String
+    Dim widthPx As Long
+    Dim heightPx As Long
+    Dim slotIndex As Long
+    Dim frameSlot As Long
+    Dim currentFrameSlot As Long
+    Dim firstIdatSeen As Integer
+    Dim declaredFrames As Long
+    Dim declaredPlays As Long
+    Dim animatedFlag As Integer
+    Dim defaultIncluded As Integer
+    Dim imageDataSeen As Integer
+    Dim frameStart As Long
+    Dim frameCounter As Long
+    Dim previousBackup As Long
+
+    ApngOpen = -1
+    If _FileExists(fileName) = 0 Then Exit Function
+
+    pngData = _ReadFile$(fileName)
+    If Len(pngData) < 33 Then Exit Function
+
+    sigText = ApngPngSignature
+    If Left$(pngData, 8) <> sigText Then Exit Function
+
+    slotIndex = ApngAllocSlot
+    ApngHeaderChunks(slotIndex) = ""
+    ApngIhdrData(slotIndex) = ""
+
+    ofs = 9
+    dataLen = Len(pngData)
+    currentFrameSlot = -1
+    firstIdatSeen = 0
+    declaredFrames = 0
+    declaredPlays = 0
+    animatedFlag = 0
+    defaultIncluded = 0
+    imageDataSeen = 0
+
+    If ApngFrames(0).Used = 0 Then
+        frameStart = 0
+    Else
+        frameStart = UBound(ApngFrames) + 1
+    End If
+    frameCounter = 0
+
+    Do While ofs + 11 <= dataLen
+        chunkLen = ApngReadUInt32(pngData, ofs)
+        chunkType = Mid$(pngData, ofs + 4, 4)
+
+        If chunkLen < 0 Then Exit Do
+        If ofs + 11 + chunkLen > dataLen Then Exit Do
+
+        chunkData = Mid$(pngData, ofs + 8, chunkLen)
+        rawChunk = Mid$(pngData, ofs, chunkLen + 12)
+
+        Select Case chunkType
+            Case "IHDR"
+                If chunkLen <> 13 Then Exit Do
+                ApngIhdrData(slotIndex) = chunkData
+                widthPx = ApngReadUInt32(chunkData, 1)
+                heightPx = ApngReadUInt32(chunkData, 5)
+
+            Case "acTL"
+                If chunkLen >= 8 Then
+                    animatedFlag = -1
+                    declaredFrames = ApngReadUInt32(chunkData, 1)
+                    declaredPlays = ApngReadUInt32(chunkData, 5)
+                End If
+
+            Case "fcTL"
+                If chunkLen >= 26 Then
+                    frameSlot = ApngAppendFrameSlot
+                    ApngFrames(frameSlot).Used = -1
+                    ApngFrames(frameSlot).WidthPx = ApngReadUInt32(chunkData, 5)
+                    ApngFrames(frameSlot).HeightPx = ApngReadUInt32(chunkData, 9)
+                    ApngFrames(frameSlot).XOffset = ApngReadUInt32(chunkData, 13)
+                    ApngFrames(frameSlot).YOffset = ApngReadUInt32(chunkData, 17)
+                    ApngFrames(frameSlot).DelayNum = ApngReadUInt16(chunkData, 21)
+                    ApngFrames(frameSlot).DelayDen = ApngReadUInt16(chunkData, 23)
+                    ApngFrames(frameSlot).DisposeOp = ApngReadByte(chunkData, 25)
+                    ApngFrames(frameSlot).BlendOp = ApngReadByte(chunkData, 26)
+                    ApngFrameData(frameSlot) = ""
+                    currentFrameSlot = frameSlot
+                    frameCounter = frameCounter + 1
+                    If firstIdatSeen = 0 And frameCounter = 1 Then defaultIncluded = -1
+                End If
+
+            Case "IDAT"
+                imageDataSeen = -1
+                If firstIdatSeen = 0 Then firstIdatSeen = -1
+
+                If animatedFlag = 0 Then
+                    If frameCounter = 0 Then
+                        frameSlot = ApngAppendFrameSlot
+                        ApngFrames(frameSlot).Used = -1
+                        ApngFrames(frameSlot).WidthPx = widthPx
+                        ApngFrames(frameSlot).HeightPx = heightPx
+                        ApngFrames(frameSlot).XOffset = 0
+                        ApngFrames(frameSlot).YOffset = 0
+                        ApngFrames(frameSlot).DelayNum = 1
+                        ApngFrames(frameSlot).DelayDen = 1
+                        ApngFrames(frameSlot).DisposeOp = 0
+                        ApngFrames(frameSlot).BlendOp = 0
+                        ApngFrameData(frameSlot) = ""
+                        currentFrameSlot = frameSlot
+                        frameCounter = 1
+                        defaultIncluded = -1
+                    End If
+                    If currentFrameSlot >= 0 Then ApngFrameData(currentFrameSlot) = ApngFrameData(currentFrameSlot) + chunkData
+                Else
+                    If defaultIncluded <> 0 And currentFrameSlot >= 0 Then
+                        ApngFrameData(currentFrameSlot) = ApngFrameData(currentFrameSlot) + chunkData
+                    End If
+                End If
+
+            Case "fdAT"
+                If currentFrameSlot >= 0 Then
+                    If chunkLen >= 4 Then
+                        ApngFrameData(currentFrameSlot) = ApngFrameData(currentFrameSlot) + Mid$(chunkData, 5)
+                    End If
+                End If
+
+            Case "IEND"
+                Exit Do
+
+            Case Else
+                If firstIdatSeen = 0 Then
+                    If chunkType <> "acTL" And chunkType <> "fcTL" Then
+                        ApngHeaderChunks(slotIndex) = ApngHeaderChunks(slotIndex) + rawChunk
+                    End If
+                End If
+        End Select
+
+        ofs = ofs + chunkLen + 12
+    Loop
+
+    If Len(ApngIhdrData(slotIndex)) <> 13 Then Exit Function
+    If widthPx <= 0 Or heightPx <= 0 Then Exit Function
+    If frameCounter <= 0 Then
+        If imageDataSeen = 0 Then Exit Function
+        frameCounter = 1
+    End If
+
+    If animatedFlag <> 0 And declaredFrames > 0 Then
+        If declaredFrames <> frameCounter Then
+            ' Keep practical tolerance: use parsed frame count.
+        End If
+    End If
+
+    ApngItems(slotIndex).Used = -1
+    ApngItems(slotIndex).IsAnimated = animatedFlag
+    ApngItems(slotIndex).WidthPx = widthPx
+    ApngItems(slotIndex).HeightPx = heightPx
+    ApngItems(slotIndex).FrameStart = frameStart
+    ApngItems(slotIndex).FrameCount = frameCounter
+    ApngItems(slotIndex).PlayCount = declaredPlays
+    If animatedFlag = 0 Then ApngItems(slotIndex).PlayCount = 1
+    ApngItems(slotIndex).DefaultImageIncluded = defaultIncluded
+    ApngItems(slotIndex).CurrentFrame = 0
+    ApngItems(slotIndex).Playing = 0
+    ApngItems(slotIndex).Paused = 0
+    ApngItems(slotIndex).LoopMode = APNG_LOOP_FILE_DEFAULT
+    ApngItems(slotIndex).NextTick = 0
+    ApngItems(slotIndex).CompletedLoops = 0
+    ApngErrorTexts(slotIndex) = ""
+    ApngItems(slotIndex).CanvasHandle = _NewImage(widthPx, heightPx, 32)
+    ApngItems(slotIndex).BackupHandle = 0
+    ApngItems(slotIndex).RenderedFrame = -1
+
+    If ApngItems(slotIndex).CanvasHandle > -2 Then
+        ApngItems(slotIndex).Used = 0
+        ApngHeaderChunks(slotIndex) = ""
+        ApngIhdrData(slotIndex) = ""
+        Exit Function
+    End If
+
+    ApngOpen = slotIndex
+End Function
+
+Function ApngOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long, maxFrames As Long)
+    Dim ok As Integer
+    Dim isAnimated As Integer
+    Dim widthPx As Long
+    Dim heightPx As Long
+    Dim frameCount As Long
+
+    ApngOpenLimit = -1
+    ApngProbe fileName, ok, isAnimated, widthPx, heightPx, frameCount
+    If ok = 0 Then Exit Function
+    If maxWidth > 0 Then
+        If widthPx > maxWidth Then Exit Function
+    End If
+    If maxHeight > 0 Then
+        If heightPx > maxHeight Then Exit Function
+    End If
+    If maxFrames > 0 Then
+        If frameCount > maxFrames Then Exit Function
+    End If
+
+    ApngOpenLimit = ApngOpen(fileName)
+End Function
+
+Sub ApngProbe (fileName As String, ok As Integer, isAnimated As Integer, widthPx As Long, heightPx As Long, frameCount As Long)
+    Dim pngData As String
+    Dim ofs As Long
+    Dim dataLen As Long
+    Dim chunkLen As Long
+    Dim chunkType As String
+    Dim chunkData As String
+    Dim firstIdatSeen As Integer
+    Dim gotIhdr As Integer
+    Dim gotActl As Integer
+    Dim sigText As String
+
+    ok = 0
+    isAnimated = 0
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+
+    If _FileExists(fileName) = 0 Then Exit Sub
+    pngData = _ReadFile$(fileName)
+    If Len(pngData) < 33 Then Exit Sub
+
+    sigText = ApngPngSignature
+    If Left$(pngData, 8) <> sigText Then Exit Sub
+
+    ofs = 9
+    dataLen = Len(pngData)
+    firstIdatSeen = 0
+    gotIhdr = 0
+    gotActl = 0
+
+    Do While ofs + 11 <= dataLen
+        chunkLen = ApngReadUInt32(pngData, ofs)
+        chunkType = Mid$(pngData, ofs + 4, 4)
+        If chunkLen < 0 Then Exit Do
+        If ofs + 11 + chunkLen > dataLen Then Exit Do
+        chunkData = Mid$(pngData, ofs + 8, chunkLen)
+
+        Select Case chunkType
+            Case "IHDR"
+                If chunkLen <> 13 Then Exit Do
+                widthPx = ApngReadUInt32(chunkData, 1)
+                heightPx = ApngReadUInt32(chunkData, 5)
+                gotIhdr = -1
+
+            Case "acTL"
+                If firstIdatSeen = 0 Then
+                    gotActl = -1
+                    isAnimated = -1
+                End If
+
+            Case "fcTL"
+                frameCount = frameCount + 1
+
+            Case "IDAT"
+                firstIdatSeen = -1
+
+            Case "IEND"
+                Exit Do
+        End Select
+
+        ofs = ofs + chunkLen + 12
+    Loop
+
+    If gotIhdr = 0 Then Exit Sub
+    If widthPx <= 0 Or heightPx <= 0 Then Exit Sub
+
+    If gotActl = 0 Then
+        frameCount = 1
+        isAnimated = 0
+    Else
+        If frameCount <= 0 Then Exit Sub
+    End If
+
+    ok = -1
+End Sub
+
+Sub ApngClose (apngId As Long)
+    Dim frameIndex As Long
+    Dim frameSlot As Long
+    Dim firstFrame As Long
+    Dim lastFrame As Long
+
+    If ApngValidId(apngId) = 0 Then Exit Sub
+
+    ApngFreeHandle ApngItems(apngId).CanvasHandle
+    ApngFreeHandle ApngItems(apngId).BackupHandle
+
+    firstFrame = ApngItems(apngId).FrameStart
+    lastFrame = firstFrame + ApngItems(apngId).FrameCount - 1
+
+    If ApngItems(apngId).FrameCount > 0 Then
+        For frameSlot = firstFrame To lastFrame
+            ApngFrames(frameSlot).Used = 0
+            ApngFrameData(frameSlot) = ""
+        Next frameSlot
+    End If
+
+    ApngItems(apngId).Used = 0
+    ApngItems(apngId).IsAnimated = 0
+    ApngItems(apngId).WidthPx = 0
+    ApngItems(apngId).HeightPx = 0
+    ApngItems(apngId).FrameStart = 0
+    ApngItems(apngId).FrameCount = 0
+    ApngItems(apngId).PlayCount = 0
+    ApngItems(apngId).DefaultImageIncluded = 0
+    ApngItems(apngId).CurrentFrame = 0
+    ApngItems(apngId).Playing = 0
+    ApngItems(apngId).Paused = 0
+    ApngItems(apngId).LoopMode = APNG_LOOP_FILE_DEFAULT
+    ApngItems(apngId).NextTick = 0
+    ApngItems(apngId).CompletedLoops = 0
+    ApngItems(apngId).CanvasHandle = 0
+    ApngItems(apngId).BackupHandle = 0
+    ApngItems(apngId).RenderedFrame = -1
+
+    ApngHeaderChunks(apngId) = ""
+    ApngIhdrData(apngId) = ""
+    ApngErrorTexts(apngId) = ""
+End Sub
+
+Sub ApngFreeAll ()
+    Dim apngId As Long
+
+    For apngId = 0 To UBound(ApngItems)
+        If ApngItems(apngId).Used <> 0 Then
+            ApngClose apngId
+        End If
+    Next apngId
+End Sub
+
+Sub ApngPlay (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If ApngItems(apngId).FrameCount <= 0 Then Exit Sub
+
+    ApngItems(apngId).Playing = -1
+    ApngItems(apngId).Paused = 0
+    ApngItems(apngId).CompletedLoops = 0
+    ApngItems(apngId).NextTick = Timer + ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+End Sub
+
+Sub ApngStop (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    dim N as long
+    ApngItems(apngId).Playing = 0
+    ApngItems(apngId).Paused = 0
+    ApngItems(apngId).CurrentFrame = 0
+    ApngItems(apngId).NextTick = 0
+    ApngItems(apngId).CompletedLoops = 0
+
+    ApngResetRenderState apngId
+    If ApngItems(apngId).FrameCount > 0 Then
+    N = ApngEnsureFrameRendered (apngId, 0)
+    End If
+End Sub
+
+Sub ApngPause (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If ApngItems(apngId).Playing = 0 Then Exit Sub
+
+    ApngItems(apngId).Playing = 0
+    ApngItems(apngId).Paused = -1
+End Sub
+
+Sub ApngResume (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If ApngItems(apngId).Paused = 0 Then Exit Sub
+    If ApngItems(apngId).FrameCount <= 0 Then Exit Sub
+
+    ApngItems(apngId).Paused = 0
+    ApngItems(apngId).Playing = -1
+    ApngItems(apngId).NextTick = Timer + ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+End Sub
+
+Sub ApngSetLoop (apngId As Long, loopMode As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+
+    Select Case loopMode
+        Case APNG_LOOP_FILE_DEFAULT, APNG_LOOP_FOREVER, APNG_LOOP_ONCE
+            ApngItems(apngId).LoopMode = loopMode
+        Case Else
+            ApngItems(apngId).LoopMode = APNG_LOOP_FILE_DEFAULT
+    End Select
+End Sub
+
+Sub ApngUpdate (apngId As Long)
+    Dim tickNow As Double
+    Dim nextFrame As Long
+    Dim allowLoop As Integer
+    Dim playCount As Long, N as long
+
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If ApngItems(apngId).Playing = 0 Then Exit Sub
+    If ApngItems(apngId).FrameCount <= 1 Then Exit Sub
+
+    tickNow = Timer
+    If tickNow < ApngItems(apngId).NextTick Then Exit Sub
+
+    nextFrame = ApngItems(apngId).CurrentFrame + 1
+
+    If nextFrame >= ApngItems(apngId).FrameCount Then
+        allowLoop = 0
+
+        Select Case ApngItems(apngId).LoopMode
+            Case APNG_LOOP_FOREVER
+                allowLoop = -1
+
+            Case APNG_LOOP_ONCE
+                allowLoop = 0
+
+            Case Else
+                playCount = ApngItems(apngId).PlayCount
+                If playCount = 0 Then
+                    allowLoop = -1
+                ElseIf (ApngItems(apngId).CompletedLoops + 1) < playCount Then
+                    allowLoop = -1
+                End If
+        End Select
+
+        If allowLoop = 0 Then
+            ApngItems(apngId).CurrentFrame = ApngItems(apngId).FrameCount - 1
+            ApngItems(apngId).Playing = 0
+            ApngItems(apngId).Paused = 0
+            N = ApngEnsureFrameRendered (apngId, ApngItems(apngId).CurrentFrame)
+            Exit Sub
+        End If
+
+        ApngItems(apngId).CompletedLoops = ApngItems(apngId).CompletedLoops + 1
+        nextFrame = 0
+    End If
+
+    ApngItems(apngId).CurrentFrame = nextFrame
+    ApngItems(apngId).NextTick = tickNow + ApngFrameDelay(apngId, nextFrame)
+End Sub
+
+Sub ApngDraw (apngId As Long, x As Long, y As Long)
+    Dim boxWidth As Long
+    Dim boxHeight As Long
+    Dim imgWidth As Long
+    Dim imgHeight As Long
+    Dim screenWidth As Long
+    Dim screenHeight As Long
+
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If ApngEnsureFrameRendered(apngId, ApngItems(apngId).CurrentFrame) = 0 Then Exit Sub
+
+    imgWidth = ApngItems(apngId).WidthPx
+    imgHeight = ApngItems(apngId).HeightPx
+    screenWidth = _Width
+    screenHeight = _Height
+
+    boxWidth = screenWidth - x
+    boxHeight = screenHeight - y
+
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+
+    If imgWidth <= boxWidth And imgHeight <= boxHeight Then
+        _PutImage (x, y), ApngItems(apngId).CanvasHandle
+    Else
+        ApngDrawFit apngId, x, y, boxWidth, boxHeight
+    End If
+End Sub
+
+Sub ApngDrawFit (apngId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    Dim srcWidth As Long
+    Dim srcHeight As Long
+    Dim scaleX As Double
+    Dim scaleY As Double
+    Dim scaleValue As Double
+    Dim drawWidth As Long
+    Dim drawHeight As Long
+    Dim offsetX As Long
+    Dim offsetY As Long
+
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If ApngEnsureFrameRendered(apngId, ApngItems(apngId).CurrentFrame) = 0 Then Exit Sub
+
+    srcWidth = ApngItems(apngId).WidthPx
+    srcHeight = ApngItems(apngId).HeightPx
+    If srcWidth <= 0 Or srcHeight <= 0 Then Exit Sub
+
+    scaleX = boxWidth / srcWidth
+    scaleY = boxHeight / srcHeight
+    scaleValue = scaleX
+    If scaleY < scaleValue Then scaleValue = scaleY
+    If scaleValue <= 0 Then Exit Sub
+
+    drawWidth = CLng(srcWidth * scaleValue)
+    drawHeight = CLng(srcHeight * scaleValue)
+    If drawWidth < 1 Then drawWidth = 1
+    If drawHeight < 1 Then drawHeight = 1
+
+    offsetX = x + (boxWidth - drawWidth) \ 2
+    offsetY = y + (boxHeight - drawHeight) \ 2
+
+    _PutImage (offsetX, offsetY)-(offsetX + drawWidth - 1, offsetY + drawHeight - 1), ApngItems(apngId).CanvasHandle, 0
+End Sub
+
+Sub ApngDrawStretch (apngId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    If ApngValidId(apngId) = 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If ApngEnsureFrameRendered(apngId, ApngItems(apngId).CurrentFrame) = 0 Then Exit Sub
+
+    _PutImage (x, y)-(x + boxWidth - 1, y + boxHeight - 1), ApngItems(apngId).CanvasHandle, 0
+End Sub
+
+Function ApngFrameCount& (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Function
+    ApngFrameCount = ApngItems(apngId).FrameCount
+End Function
+
+Function ApngWidth& (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Function
+    ApngWidth = ApngItems(apngId).WidthPx
+End Function
+
+Function ApngHeight& (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Function
+    ApngHeight = ApngItems(apngId).HeightPx
+End Function
+
+Function ApngIsPlaying% (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Function
+    ApngIsPlaying = ApngItems(apngId).Playing
+End Function
+
+Function ApngIsLoaded% (apngId As Long)
+    ApngIsLoaded = ApngValidId(apngId)
+End Function
+
+Function ApngFormat& (apngId As Long)
+    ApngFormat = 0
+    If ApngValidId(apngId) = 0 Then Exit Function
+
+    If ApngItems(apngId).IsAnimated <> 0 Then
+        ApngFormat = APNG_FMT_APNG
+    Else
+        ApngFormat = APNG_FMT_PNG
+    End If
+End Function
+
+Function ApngError$ (apngId As Long)
+    ApngError = ""
+    If apngId < 0 Then Exit Function
+    If apngId > UBound(ApngErrorTexts) Then Exit Function
+    ApngError = ApngErrorTexts(apngId)
+End Function
+
+Function ApngSaveFrame% (apngId As Long, frameIndex As Long, fileName As String)
+    Dim saveCanvas As Long
+    Dim saveBackup As Long
+    Dim oldCanvas As Long
+    Dim oldBackup As Long
+    Dim oldRendered As Long
+    Dim okResult As Integer
+
+    ApngSaveFrame = 0
+    If ApngValidId(apngId) = 0 Then Exit Function
+    If frameIndex < 0 Or frameIndex >= ApngItems(apngId).FrameCount Then Exit Function
+
+    oldCanvas = ApngItems(apngId).CanvasHandle
+    oldBackup = ApngItems(apngId).BackupHandle
+    oldRendered = ApngItems(apngId).RenderedFrame
+
+    saveCanvas = _NewImage(ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, 32)
+    If saveCanvas > -2 Then Exit Function
+
+    ApngItems(apngId).CanvasHandle = saveCanvas
+    ApngItems(apngId).BackupHandle = 0
+    ApngItems(apngId).RenderedFrame = -1
+
+    okResult = ApngEnsureFrameRendered(apngId, frameIndex)
+    If okResult <> 0 Then
+        _SaveImage fileName, ApngItems(apngId).CanvasHandle
+        ApngSaveFrame = -1
+    End If
+
+    ApngFreeHandle ApngItems(apngId).BackupHandle
+    ApngFreeHandle ApngItems(apngId).CanvasHandle
+
+    ApngItems(apngId).CanvasHandle = oldCanvas
+    ApngItems(apngId).BackupHandle = oldBackup
+    ApngItems(apngId).RenderedFrame = oldRendered
+End Function
+
+Function ApngCurrentFrame& (apngId As Long)
+    If ApngValidId(apngId) = 0 Then Exit Function
+    ApngCurrentFrame = ApngItems(apngId).CurrentFrame
+End Function
+
+Function ApngAllocSlot&
+    Dim itemIndex As Long
+    Dim lastIndex As Long
+
+    lastIndex = UBound(ApngItems)
+    For itemIndex = 0 To lastIndex
+        If ApngItems(itemIndex).Used = 0 Then
+            ApngAllocSlot = itemIndex
+            Exit Function
+        End If
+    Next itemIndex
+
+    ReDim _Preserve ApngItems(lastIndex + 1) As ApngStore
+    ReDim _Preserve ApngHeaderChunks(lastIndex + 1) As String
+    ReDim _Preserve ApngIhdrData(lastIndex + 1) As String
+    ReDim _Preserve ApngErrorTexts(lastIndex + 1) As String
+    ApngAllocSlot = lastIndex + 1
+End Function
+
+Function ApngAppendFrameSlot&
+    Dim lastIndex As Long
+
+    lastIndex = UBound(ApngFrames)
+    If lastIndex = 0 Then
+        If ApngFrames(0).Used = 0 Then
+            ApngAppendFrameSlot = 0
+            Exit Function
+        End If
+    End If
+
+    ReDim _Preserve ApngFrames(lastIndex + 1) As ApngFrameStore
+    ReDim _Preserve ApngFrameData(lastIndex + 1) As String
+    ApngAppendFrameSlot = lastIndex + 1
+End Function
+
+Function ApngValidId% (apngId As Long)
+    If apngId < 0 Then Exit Function
+    If apngId > UBound(ApngItems) Then Exit Function
+    If ApngItems(apngId).Used = 0 Then Exit Function
+    ApngValidId = -1
+End Function
+
+Sub ApngResetRenderState (apngId As Long)
+    ApngFreeHandle ApngItems(apngId).CanvasHandle
+    ApngFreeHandle ApngItems(apngId).BackupHandle
+
+    ApngItems(apngId).CanvasHandle = _NewImage(ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, 32)
+    ApngItems(apngId).BackupHandle = 0
+    ApngItems(apngId).RenderedFrame = -1
+End Sub
+
+Function ApngEnsureFrameRendered% (apngId As Long, targetFrame As Long)
+    Dim renderIndex As Long
+    Dim frameSlot As Long
+    Dim prevFrame As Long
+    Dim disposeOp As Integer
+
+    ApngEnsureFrameRendered = 0
+    If ApngValidId(apngId) = 0 Then Exit Function
+    If targetFrame < 0 Or targetFrame >= ApngItems(apngId).FrameCount Then Exit Function
+
+    If ApngItems(apngId).CanvasHandle > -2 Then Exit Function
+
+    If ApngItems(apngId).RenderedFrame > targetFrame Then
+        ApngResetRenderState apngId
+    End If
+
+    For renderIndex = ApngItems(apngId).RenderedFrame + 1 To targetFrame
+        If renderIndex > 0 Then
+            prevFrame = renderIndex - 1
+            ApngApplyDisposal apngId, prevFrame
+        End If
+
+        ApngFreeHandle ApngItems(apngId).BackupHandle
+        ApngItems(apngId).BackupHandle = 0
+
+        frameSlot = ApngItems(apngId).FrameStart + renderIndex
+        disposeOp = ApngFrames(frameSlot).DisposeOp
+        If renderIndex = 0 And disposeOp = 2 Then disposeOp = 1
+        If disposeOp = 2 Then
+            ApngItems(apngId).BackupHandle = _CopyImage(ApngItems(apngId).CanvasHandle, 32)
+        End If
+
+        If ApngRenderFrameToCanvas(apngId, renderIndex) = 0 Then Exit Function
+        ApngItems(apngId).RenderedFrame = renderIndex
+    Next renderIndex
+
+    ApngEnsureFrameRendered = -1
+End Function
+
+Sub ApngApplyDisposal (apngId As Long, frameIndex As Long)
+    Dim frameSlot As Long
+    Dim disposeOp As Integer
+    Dim newCanvas As Long
+
+    If frameIndex < 0 Then Exit Sub
+    frameSlot = ApngItems(apngId).FrameStart + frameIndex
+    disposeOp = ApngFrames(frameSlot).DisposeOp
+    If frameIndex = 0 And disposeOp = 2 Then disposeOp = 1
+
+    Select Case disposeOp
+        Case 0
+            ' keep canvas as-is
+
+        Case 1
+            ApngClearRectInImage ApngItems(apngId).CanvasHandle, ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, ApngFrames(frameSlot).XOffset, ApngFrames(frameSlot).YOffset, ApngFrames(frameSlot).WidthPx, ApngFrames(frameSlot).HeightPx
+
+        Case 2
+            If ApngItems(apngId).BackupHandle < -1 Then
+                newCanvas = _CopyImage(ApngItems(apngId).BackupHandle, 32)
+                If newCanvas < -1 Then
+                    ApngFreeHandle ApngItems(apngId).CanvasHandle
+                    ApngItems(apngId).CanvasHandle = newCanvas
+                Else
+                    ApngClearRectInImage ApngItems(apngId).CanvasHandle, ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, ApngFrames(frameSlot).XOffset, ApngFrames(frameSlot).YOffset, ApngFrames(frameSlot).WidthPx, ApngFrames(frameSlot).HeightPx
+                End If
+            Else
+                ApngClearRectInImage ApngItems(apngId).CanvasHandle, ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, ApngFrames(frameSlot).XOffset, ApngFrames(frameSlot).YOffset, ApngFrames(frameSlot).WidthPx, ApngFrames(frameSlot).HeightPx
+            End If
+    End Select
+End Sub
+
+Function ApngRenderFrameToCanvas% (apngId As Long, frameIndex As Long)
+    Dim frameHandle As Long
+    Dim frameSlot As Long
+    Dim tempName As String
+    Dim pngFrame As String
+
+    ApngRenderFrameToCanvas = 0
+    frameHandle = ApngPrepareFrameImage(apngId, frameIndex)
+    If frameHandle > -2 Then Exit Function
+
+    frameSlot = ApngItems(apngId).FrameStart + frameIndex
+
+    If ApngFrames(frameSlot).BlendOp = 0 Then
+        ApngClearRectInImage ApngItems(apngId).CanvasHandle, ApngItems(apngId).WidthPx, ApngItems(apngId).HeightPx, ApngFrames(frameSlot).XOffset, ApngFrames(frameSlot).YOffset, ApngFrames(frameSlot).WidthPx, ApngFrames(frameSlot).HeightPx
+    End If
+
+    _PutImage (ApngFrames(frameSlot).XOffset, ApngFrames(frameSlot).YOffset), frameHandle, ApngItems(apngId).CanvasHandle
+    _FreeImage frameHandle
+    ApngRenderFrameToCanvas = -1
+End Function
+
+Function ApngBuildFramePng$ (apngId As Long, frameIndex As Long)
+    ApngBuildFramePng = ApngBuildFramePngForCanvas(apngId, frameIndex, 0)
+End Function
+
+Function ApngBuildFramePngForCanvas$ (apngId As Long, frameIndex As Long, fullCanvas As Integer)
+    Dim frameSlot As Long
+    Dim pngData As String
+    Dim ihdrData As String
+    Dim outWidth As Long
+    Dim outHeight As Long
+
+    frameSlot = ApngItems(apngId).FrameStart + frameIndex
+
+    If fullCanvas <> 0 Then
+        outWidth = ApngItems(apngId).WidthPx
+        outHeight = ApngItems(apngId).HeightPx
+    Else
+        outWidth = ApngFrames(frameSlot).WidthPx
+        outHeight = ApngFrames(frameSlot).HeightPx
+    End If
+
+    ihdrData = ApngUInt32(outWidth) + ApngUInt32(outHeight) + Mid$(ApngIhdrData(apngId), 9, 5)
+    pngData = ApngPngSignature
+    pngData = pngData + ApngMakeChunk("IHDR", ihdrData)
+    pngData = pngData + ApngHeaderChunks(apngId)
+    pngData = pngData + ApngMakeChunk("IDAT", ApngFrameData(frameSlot))
+    pngData = pngData + ApngMakeChunk("IEND", "")
+
+    ApngBuildFramePngForCanvas = pngData
+End Function
+
+Function ApngMakeChunk$ (chunkType As String, chunkData As String)
+    Dim crcValue As _Unsigned Long
+
+    crcValue = _Crc32(chunkType + chunkData)
+    ApngMakeChunk = ApngUInt32(Len(chunkData)) + chunkType + chunkData + ApngUInt32(crcValue)
+End Function
+
+Function ApngPngSignature$
+    ApngPngSignature = Chr$(137) + "PNG" + Chr$(13) + Chr$(10) + Chr$(26) + Chr$(10)
+End Function
+
+Function ApngUInt32$ (value As _Unsigned Long)
+    Dim b1 As Integer
+    Dim b2 As Integer
+    Dim b3 As Integer
+    Dim b4 As Integer
+
+    b1 = (value \ 16777216) And 255
+    b2 = (value \ 65536) And 255
+    b3 = (value \ 256) And 255
+    b4 = value And 255
+
+    ApngUInt32 = Chr$(b1) + Chr$(b2) + Chr$(b3) + Chr$(b4)
+End Function
+
+Function ApngReadUInt32& (textData As String, ofs As Long)
+    Dim b1 As Long
+    Dim b2 As Long
+    Dim b3 As Long
+    Dim b4 As Long
+
+    b1 = ApngReadByte(textData, ofs)
+    b2 = ApngReadByte(textData, ofs + 1)
+    b3 = ApngReadByte(textData, ofs + 2)
+    b4 = ApngReadByte(textData, ofs + 3)
+
+    ApngReadUInt32 = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+End Function
+
+Function ApngReadUInt16& (textData As String, ofs As Long)
+    Dim b1 As Long
+    Dim b2 As Long
+
+    b1 = ApngReadByte(textData, ofs)
+    b2 = ApngReadByte(textData, ofs + 1)
+    ApngReadUInt16 = b1 * 256 + b2
+End Function
+
+Function ApngReadByte% (textData As String, ofs As Long)
+    If ofs < 1 Or ofs > Len(textData) Then Exit Function
+    ApngReadByte = Asc(Mid$(textData, ofs, 1))
+End Function
+
+Function ApngFrameDelay# (apngId As Long, frameIndex As Long)
+    Dim frameSlot As Long
+    Dim delayNum As Long
+    Dim delayDen As Long
+
+    ApngFrameDelay = .1
+    If ApngValidId(apngId) = 0 Then Exit Function
+    If frameIndex < 0 Or frameIndex >= ApngItems(apngId).FrameCount Then Exit Function
+
+    frameSlot = ApngItems(apngId).FrameStart + frameIndex
+    delayNum = ApngFrames(frameSlot).DelayNum
+    delayDen = ApngFrames(frameSlot).DelayDen
+    If delayDen <= 0 Then delayDen = 100
+
+    If delayNum <= 0 Then
+        ApngFrameDelay = .01
+    Else
+        ApngFrameDelay = delayNum / delayDen
+    End If
+End Function
+
+Sub ApngClearRectInImage (imageHandle As Long, imageWidth As Long, imageHeight As Long, leftPx As Long, topPx As Long, rectWidth As Long, rectHeight As Long)
+    Dim memBlock As _MEM
+    Dim x1 As Long
+    Dim y1 As Long
+    Dim x2 As Long
+    Dim y2 As Long
+    Dim rowIndex As Long
+    Dim colIndex As Long
+    Dim rowOffset As _Offset
+    Dim pixelValue As _Unsigned Long
+
+    If imageHandle > -2 Then Exit Sub
+    If rectWidth <= 0 Or rectHeight <= 0 Then Exit Sub
+
+    x1 = leftPx
+    y1 = topPx
+    x2 = leftPx + rectWidth - 1
+    y2 = topPx + rectHeight - 1
+
+    If x1 < 0 Then x1 = 0
+    If y1 < 0 Then y1 = 0
+    If x2 >= imageWidth Then x2 = imageWidth - 1
+    If y2 >= imageHeight Then y2 = imageHeight - 1
+
+    If x1 > x2 Or y1 > y2 Then Exit Sub
+
+    memBlock = _MemImage(imageHandle)
+    pixelValue = 0
+
+    For rowIndex = y1 To y2
+        rowOffset = memBlock.OFFSET + ((rowIndex * imageWidth + x1) * 4)
+        For colIndex = x1 To x2
+            _MemPut memBlock, rowOffset + ((colIndex - x1) * 4), pixelValue As _UNSIGNED LONG
+        Next colIndex
+    Next rowIndex
+
+    _MemFree memBlock
+End Sub
+
+Function ApngTempFileName$ (apngId As Long, frameIndex As Long)
+    ApngTempFileName = _CWD$ + "/__apngtmp_" + LTrim$(Str$(apngId)) + "_" + LTrim$(Str$(frameIndex)) + ".png"
+End Function
+
+Function ApngPrepareFrameImage& (apngId As Long, frameIndex As Long)
+    Dim pngData As String
+    Dim tempName As String
+    Dim frameHandle As Long
+
+    ApngPrepareFrameImage = -1
+    If ApngValidId(apngId) = 0 Then Exit Function
+    If frameIndex < 0 Or frameIndex >= ApngItems(apngId).FrameCount Then Exit Function
+
+    pngData = ApngBuildFramePng(apngId, frameIndex)
+    tempName = ApngTempFileName(apngId, frameIndex)
+
+    If _FileExists(tempName) Then Kill tempName
+    _WriteFile tempName, pngData
+    frameHandle = _LoadImage(tempName, 32)
+    If _FileExists(tempName) Then Kill tempName
+
+    ApngPrepareFrameImage = frameHandle
+End Function
+
+Sub ApngFreeHandle (imageHandle As Long)
+    If imageHandle < -1 Then _FreeImage imageHandle
+End Sub

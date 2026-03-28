@@ -1,0 +1,1265 @@
+Function Gif89aOpen& (fileName As String)
+    Dim ff As Integer
+    Dim fileLen As Long
+    Dim headText As String
+    Dim ofs As Long
+    Dim screenWidth As Long
+    Dim screenHeight As Long
+    Dim packedByte As Integer
+    Dim globalTableFlag As Integer
+    Dim globalTableCount As Long
+    Dim backgroundIndex As Integer
+    Dim aspectRatio As Integer
+    Dim globalPalR(0 To 255) As Integer
+    Dim globalPalG(0 To 255) As Integer
+    Dim globalPalB(0 To 255) As Integer
+    Dim bgColor As _Unsigned Long
+    Dim okFile As Integer
+    Dim blockId As Integer
+    Dim extLabel As Integer
+    Dim appIdText As String
+    Dim appBlockLen As Integer
+    Dim fileLoopCount As Long
+    Dim gcePacked As Integer
+    Dim gceDelay As Integer
+    Dim gceTransparentFlag As Integer
+    Dim gceTransparentIndex As Integer
+    Dim gceDisposal As Integer
+    Dim leftPx As Long
+    Dim topPx As Long
+    Dim frameWidth As Long
+    Dim frameHeight As Long
+    Dim localPacked As Integer
+    Dim localTableFlag As Integer
+    Dim localTableCount As Long
+    Dim interlaced As Integer
+    Dim localTableOfs As Long
+    Dim lzwMinCodeSize As Integer
+    Dim imageDataOfs As Long
+    Dim slotIndex As Long
+    Dim frameStart As Long
+    Dim frameCounter As Long
+    Dim frameSlot As Long
+    Dim dummyByte As Integer
+    Dim dataLen As Long
+    Dim RawData As String
+
+    Gif89aOpen = -1
+    fileLoopCount = 1
+    ff = FreeFile
+    okFile = 0
+
+    Open fileName For Binary As #ff
+    fileLen = LOF(ff)
+    If fileLen > 0 Then
+        RawData = Space$(fileLen)
+        Get #ff, 1, RawData
+        okFile = -1
+    End If
+    Close #ff
+
+    If okFile = 0 Then Exit Function
+    If fileLen < 13 Then Exit Function
+
+    headText = Left$(RawData, 6)
+    If headText <> "GIF87a" And headText <> "GIF89a" Then Exit Function
+
+    ofs = 7
+    screenWidth = Gif89aReadWord(RawData, ofs)
+    screenHeight = Gif89aReadWord(RawData, ofs)
+    packedByte = Gif89aReadByte(RawData, ofs)
+    backgroundIndex = Gif89aReadByte(RawData, ofs)
+    aspectRatio = Gif89aReadByte(RawData, ofs)
+
+    globalTableFlag = 0
+    If (packedByte And 128) <> 0 Then globalTableFlag = -1
+    globalTableCount = _ShL(1, (packedByte And 7) + 1)
+
+    If globalTableFlag <> 0 Then
+        Gif89aReadColorTable RawData, ofs, globalTableCount, globalPalR(), globalPalG(), globalPalB()
+        If backgroundIndex >= 0 And backgroundIndex < globalTableCount Then
+            bgColor = _RGBA32(globalPalR(backgroundIndex), globalPalG(backgroundIndex), globalPalB(backgroundIndex), 255)
+        Else
+            bgColor = _RGBA32(0, 0, 0, 0)
+        End If
+    Else
+        bgColor = _RGBA32(0, 0, 0, 0)
+    End If
+
+    slotIndex = Gif89aAllocSlot
+    Gif89aRawData(slotIndex) = RawData
+    Gif89aErrorTexts(slotIndex) = ""
+
+    Gif89aItems(slotIndex).Used = -1
+    Gif89aItems(slotIndex).Is89a = 0
+    If headText = "GIF89a" Then Gif89aItems(slotIndex).Is89a = -1
+    Gif89aItems(slotIndex).WidthPx = screenWidth
+    Gif89aItems(slotIndex).HeightPx = screenHeight
+    Gif89aItems(slotIndex).BackgroundIndex = backgroundIndex
+    Gif89aItems(slotIndex).GlobalTableFlag = globalTableFlag
+    Gif89aItems(slotIndex).GlobalTableCount = globalTableCount
+    Gif89aItems(slotIndex).GlobalTableOfs = 14
+    Gif89aItems(slotIndex).BgColor = bgColor
+    Gif89aItems(slotIndex).CurrentFrame = 0
+    Gif89aItems(slotIndex).Playing = 0
+    Gif89aItems(slotIndex).Paused = 0
+    Gif89aItems(slotIndex).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    Gif89aItems(slotIndex).FileLoopCount = 1
+    Gif89aItems(slotIndex).LoopIteration = 1
+    Gif89aItems(slotIndex).NextTick = 0
+    Gif89aItems(slotIndex).CanvasHandle = 0
+    Gif89aItems(slotIndex).RestoreHandle = 0
+    Gif89aItems(slotIndex).RenderedFrame = -1
+
+    If globalTableFlag = 0 Then
+        Gif89aItems(slotIndex).GlobalTableOfs = 0
+    End If
+
+    frameCounter = 0
+    If UBound(Gif89aFrames) = 0 Then
+        If Gif89aFrames(0).Used = 0 Then
+            frameStart = 0
+        Else
+            frameStart = 1
+        End If
+    Else
+        frameStart = UBound(Gif89aFrames) + 1
+    End If
+
+    gceDelay = 10
+    gceTransparentFlag = 0
+    gceTransparentIndex = 0
+    gceDisposal = 0
+
+    dataLen = Len(RawData)
+    Do While ofs <= dataLen
+        blockId = Gif89aReadByte(RawData, ofs)
+
+        If blockId = &H3B Then Exit Do
+
+        If blockId = &H21 Then
+            extLabel = Gif89aReadByte(RawData, ofs)
+            Select Case extLabel
+                Case &HF9
+                    If Gif89aReadByte(RawData, ofs) = 4 Then
+                        gcePacked = Gif89aReadByte(RawData, ofs)
+                        gceDelay = Gif89aReadWord(RawData, ofs)
+                        gceTransparentIndex = Gif89aReadByte(RawData, ofs)
+                        dummyByte = Gif89aReadByte(RawData, ofs)
+                        gceDisposal = (gcePacked And &H1C) \ 4
+                        gceTransparentFlag = 0
+                        If (gcePacked And 1) <> 0 Then gceTransparentFlag = -1
+                    Else
+                        Gif89aSkipSubBlocks RawData, ofs
+                    End If
+                Case &HFF
+                    appBlockLen = Gif89aReadByte(RawData, ofs)
+                    If appBlockLen = 11 Then
+                        If ofs + 10 <= Len(RawData) Then
+                            appIdText = Mid$(RawData, ofs, 11)
+                            ofs = ofs + 11
+                            If appIdText = "NETSCAPE2.0" Or appIdText = "ANIMEXTS1.0" Then
+                                fileLoopCount = Gif89aReadLoopCountFromAppExt(RawData, ofs)
+                            Else
+                                Gif89aSkipSubBlocks RawData, ofs
+                            End If
+                        Else
+                            Exit Do
+                        End If
+                    Else
+                        If appBlockLen > 0 Then ofs = ofs + appBlockLen
+                        Gif89aSkipSubBlocks RawData, ofs
+                    End If
+                Case Else
+                    Gif89aSkipSubBlocks RawData, ofs
+            End Select
+        ElseIf blockId = &H2C Then
+            leftPx = Gif89aReadWord(RawData, ofs)
+            topPx = Gif89aReadWord(RawData, ofs)
+            frameWidth = Gif89aReadWord(RawData, ofs)
+            frameHeight = Gif89aReadWord(RawData, ofs)
+            localPacked = Gif89aReadByte(RawData, ofs)
+
+            localTableFlag = 0
+            If (localPacked And 128) <> 0 Then localTableFlag = -1
+            interlaced = 0
+            If (localPacked And 64) <> 0 Then interlaced = -1
+            localTableCount = _ShL(1, (localPacked And 7) + 1)
+
+            localTableOfs = 0
+            If localTableFlag <> 0 Then
+                localTableOfs = ofs
+                ofs = ofs + localTableCount * 3
+            End If
+
+            lzwMinCodeSize = Gif89aReadByte(RawData, ofs)
+            imageDataOfs = ofs
+            Gif89aSkipSubBlocks RawData, ofs
+
+            frameSlot = Gif89aAppendFrameSlot
+            Gif89aFrames(frameSlot).Used = -1
+            Gif89aFrames(frameSlot).LeftPx = leftPx
+            Gif89aFrames(frameSlot).TopPx = topPx
+            Gif89aFrames(frameSlot).WidthPx = frameWidth
+            Gif89aFrames(frameSlot).HeightPx = frameHeight
+            Gif89aFrames(frameSlot).DelayCs = gceDelay
+            If Gif89aFrames(frameSlot).DelayCs <= 0 Then Gif89aFrames(frameSlot).DelayCs = 10
+            Gif89aFrames(frameSlot).Disposal = gceDisposal
+            Gif89aFrames(frameSlot).TransparentFlag = gceTransparentFlag
+            Gif89aFrames(frameSlot).TransparentIndex = gceTransparentIndex
+            Gif89aFrames(frameSlot).Interlaced = interlaced
+            Gif89aFrames(frameSlot).LocalTableFlag = localTableFlag
+            Gif89aFrames(frameSlot).LocalTableCount = localTableCount
+            Gif89aFrames(frameSlot).LocalTableOfs = localTableOfs
+            Gif89aFrames(frameSlot).LzwMinCodeSize = lzwMinCodeSize
+            Gif89aFrames(frameSlot).ImageDataOfs = imageDataOfs
+            frameCounter = frameCounter + 1
+
+            gceDelay = 10
+            gceTransparentFlag = 0
+            gceTransparentIndex = 0
+            gceDisposal = 0
+        Else
+            Exit Do
+        End If
+    Loop
+
+    If frameCounter <= 0 Then
+        Gif89aErrorTexts(slotIndex) = "GIF has no image frames"
+        Gif89aClose slotIndex
+        Exit Function
+    End If
+
+    Gif89aItems(slotIndex).FrameStart = frameStart
+    Gif89aItems(slotIndex).FrameCount = frameCounter
+    Gif89aItems(slotIndex).FileLoopCount = fileLoopCount
+    Gif89aItems(slotIndex).LoopIteration = 1
+    Gif89aResetRenderState slotIndex
+    Gif89aItems(slotIndex).NextTick = Timer + (Gif89aFrames(frameStart).DelayCs / 100#)
+
+    Gif89aOpen = slotIndex
+End Function
+
+Function Gif89aOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long, maxFrames As Long)
+    Dim ok As Integer
+    Dim is89a As Integer
+    Dim widthPx As Long
+    Dim heightPx As Long
+    Dim frameCount As Long
+
+    Gif89aOpenLimit = -1
+    Gif89aProbe fileName, ok, is89a, widthPx, heightPx, frameCount
+    If ok = 0 Then Exit Function
+
+    If maxWidth > 0 Then
+        If widthPx > maxWidth Then Exit Function
+    End If
+
+    If maxHeight > 0 Then
+        If heightPx > maxHeight Then Exit Function
+    End If
+
+    If maxFrames > 0 Then
+        If frameCount > maxFrames Then Exit Function
+    End If
+
+    Gif89aOpenLimit = Gif89aOpen(fileName)
+End Function
+
+Sub Gif89aProbe (fileName As String, ok As Integer, is89a As Integer, widthPx As Long, heightPx As Long, frameCount As Long)
+    Dim ff As Integer
+    Dim fileLen As Long
+    Dim headText As String
+    Dim ofs As Long
+    Dim packedByte As Integer
+    Dim globalTableFlag As Integer
+    Dim globalTableCount As Long
+    Dim localPacked As Integer
+    Dim localTableFlag As Integer
+    Dim localTableCount As Long
+    Dim blockId As Integer
+    Dim extLabel As Integer
+    Dim RawData As String
+
+    ok = 0
+    is89a = 0
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+
+    ff = FreeFile
+    Open fileName For Binary As #ff
+    fileLen = LOF(ff)
+    If fileLen <= 0 Then
+        Close #ff
+        Exit Sub
+    End If
+
+    RawData = Space$(fileLen)
+    Get #ff, 1, RawData
+    Close #ff
+
+    If fileLen < 13 Then Exit Sub
+
+    headText = Left$(RawData, 6)
+    If headText <> "GIF87a" And headText <> "GIF89a" Then Exit Sub
+    If headText = "GIF89a" Then is89a = -1
+
+    ofs = 7
+    widthPx = Gif89aReadWord(RawData, ofs)
+    heightPx = Gif89aReadWord(RawData, ofs)
+    packedByte = Gif89aReadByte(RawData, ofs)
+    ofs = ofs + 2
+
+    globalTableFlag = 0
+    If (packedByte And 128) <> 0 Then globalTableFlag = -1
+    globalTableCount = _ShL(1, (packedByte And 7) + 1)
+    If globalTableFlag <> 0 Then
+        ofs = ofs + globalTableCount * 3
+    End If
+
+    Do While ofs <= Len(RawData)
+        blockId = Gif89aReadByte(RawData, ofs)
+
+        Select Case blockId
+            Case &H3B
+                ok = -1
+                Exit Sub
+
+            Case &H21
+                extLabel = Gif89aReadByte(RawData, ofs)
+                Gif89aSkipSubBlocks RawData, ofs
+
+            Case &H2C
+                ofs = ofs + 8
+                localPacked = Gif89aReadByte(RawData, ofs)
+                localTableFlag = 0
+                If (localPacked And 128) <> 0 Then localTableFlag = -1
+                localTableCount = _ShL(1, (localPacked And 7) + 1)
+                If localTableFlag <> 0 Then
+                    ofs = ofs + localTableCount * 3
+                End If
+                ofs = ofs + 1
+                Gif89aSkipSubBlocks RawData, ofs
+                frameCount = frameCount + 1
+
+            Case Else
+                Exit Sub
+        End Select
+    Loop
+End Sub
+
+Sub Gif89aClose (gifId As Long)
+    Dim firstFrame As Long
+    Dim lastFrame As Long
+    Dim frameIndex As Long
+
+    If gifId < 0 Then Exit Sub
+    If gifId > UBound(Gif89aItems) Then Exit Sub
+    If Gif89aItems(gifId).Used = 0 Then Exit Sub
+
+    If Gif89aItems(gifId).CanvasHandle < -1 Then _FreeImage Gif89aItems(gifId).CanvasHandle
+    If Gif89aItems(gifId).RestoreHandle < -1 Then _FreeImage Gif89aItems(gifId).RestoreHandle
+
+    firstFrame = Gif89aItems(gifId).FrameStart
+    lastFrame = firstFrame + Gif89aItems(gifId).FrameCount - 1
+    If firstFrame < 0 Then firstFrame = 0
+    If lastFrame > UBound(Gif89aFrames) Then lastFrame = UBound(Gif89aFrames)
+
+    For frameIndex = firstFrame To lastFrame
+        Gif89aFrames(frameIndex).Used = 0
+        Gif89aFrames(frameIndex).LeftPx = 0
+        Gif89aFrames(frameIndex).TopPx = 0
+        Gif89aFrames(frameIndex).WidthPx = 0
+        Gif89aFrames(frameIndex).HeightPx = 0
+        Gif89aFrames(frameIndex).DelayCs = 0
+        Gif89aFrames(frameIndex).Disposal = 0
+        Gif89aFrames(frameIndex).TransparentFlag = 0
+        Gif89aFrames(frameIndex).TransparentIndex = 0
+        Gif89aFrames(frameIndex).Interlaced = 0
+        Gif89aFrames(frameIndex).LocalTableFlag = 0
+        Gif89aFrames(frameIndex).LocalTableCount = 0
+        Gif89aFrames(frameIndex).LocalTableOfs = 0
+        Gif89aFrames(frameIndex).LzwMinCodeSize = 0
+        Gif89aFrames(frameIndex).ImageDataOfs = 0
+    Next frameIndex
+
+    Gif89aItems(gifId).Used = 0
+    Gif89aItems(gifId).Is89a = 0
+    Gif89aItems(gifId).WidthPx = 0
+    Gif89aItems(gifId).HeightPx = 0
+    Gif89aItems(gifId).BackgroundIndex = 0
+    Gif89aItems(gifId).GlobalTableFlag = 0
+    Gif89aItems(gifId).GlobalTableCount = 0
+    Gif89aItems(gifId).GlobalTableOfs = 0
+    Gif89aItems(gifId).BgColor = 0
+    Gif89aItems(gifId).FrameStart = 0
+    Gif89aItems(gifId).FrameCount = 0
+    Gif89aItems(gifId).CurrentFrame = 0
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    Gif89aItems(gifId).FileLoopCount = 1
+    Gif89aItems(gifId).LoopIteration = 1
+    Gif89aItems(gifId).NextTick = 0
+    Gif89aItems(gifId).CanvasHandle = 0
+    Gif89aItems(gifId).RestoreHandle = 0
+    Gif89aItems(gifId).RenderedFrame = -1
+    Gif89aRawData(gifId) = ""
+    Gif89aErrorTexts(gifId) = ""
+End Sub
+
+
+Sub Gif89aFreeAll ()
+    Dim gifId As Long
+
+    For gifId = 0 To UBound(Gif89aItems)
+        If Gif89aItems(gifId).Used <> 0 Then
+            Gif89aClose gifId
+        End If
+    Next gifId
+End Sub
+
+Sub Gif89aPlay (gifId As Long)
+    Dim frameSlot As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    Gif89aItems(gifId).Playing = -1
+    Gif89aItems(gifId).Paused = 0
+
+    frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+    If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+    Gif89aItems(gifId).NextTick = Timer + (Gif89aFrames(frameSlot).DelayCs / 100#)
+End Sub
+
+Sub Gif89aStop (gifId As Long)
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    Dim N as long
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).CurrentFrame = 0
+    Gif89aItems(gifId).LoopIteration = 1
+    Gif89aItems(gifId).NextTick = 0
+
+    Gif89aResetRenderState gifId
+    N = Gif89aEnsureFrameRendered (gifId, 0)
+End Sub
+
+
+Sub Gif89aPause (gifId As Long)
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Playing = 0 Then Exit Sub
+
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = -1
+End Sub
+
+Sub Gif89aResume (gifId As Long)
+    Dim frameSlot As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Paused = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).Playing = -1
+
+    frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+    If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+    Gif89aItems(gifId).NextTick = Timer + (Gif89aFrames(frameSlot).DelayCs / 100#)
+End Sub
+
+Sub Gif89aSetLoop (gifId As Long, loopMode As Long)
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    Select Case loopMode
+        Case GIF89A_LOOP_FILE_DEFAULT, GIF89A_LOOP_FOREVER, GIF89A_LOOP_ONCE
+            Gif89aItems(gifId).LoopMode = loopMode
+        Case Else
+            Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    End Select
+End Sub
+
+Sub Gif89aUpdate (gifId As Long)
+    Dim tickNow As Double
+    Dim nextFrame As Long
+    Dim frameSlot As Long, N as LONG
+    Dim allowLoop As Integer
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Playing = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    tickNow = Timer
+    If tickNow < Gif89aItems(gifId).NextTick Then Exit Sub
+
+    nextFrame = Gif89aItems(gifId).CurrentFrame + 1
+
+    If nextFrame >= Gif89aItems(gifId).FrameCount Then
+        allowLoop = 0
+
+        Select Case Gif89aItems(gifId).LoopMode
+            Case GIF89A_LOOP_FOREVER
+                allowLoop = -1
+
+            Case GIF89A_LOOP_ONCE
+                allowLoop = 0
+
+            Case Else
+                If Gif89aItems(gifId).FileLoopCount = 0 Then
+                    allowLoop = -1
+                ElseIf Gif89aItems(gifId).LoopIteration < Gif89aItems(gifId).FileLoopCount Then
+                    allowLoop = -1
+                End If
+        End Select
+
+        If allowLoop = 0 Then
+            Gif89aItems(gifId).CurrentFrame = Gif89aItems(gifId).FrameCount - 1
+            Gif89aItems(gifId).Playing = 0
+            Gif89aItems(gifId).Paused = 0
+            N = Gif89aEnsureFrameRendered (gifId, Gif89aItems(gifId).CurrentFrame)
+            Exit Sub
+        End If
+
+        nextFrame = 0
+        If Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT Then
+            If Gif89aItems(gifId).FileLoopCount > 0 Then
+                Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+            End If
+        ElseIf Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FOREVER Then
+            Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+        End If
+    End If
+
+    Gif89aItems(gifId).CurrentFrame = nextFrame
+    If Gif89aEnsureFrameRendered(gifId, nextFrame) = 0 Then Exit Sub
+
+    frameSlot = Gif89aItems(gifId).FrameStart + nextFrame
+    Gif89aItems(gifId).NextTick = tickNow + (Gif89aFrames(frameSlot).DelayCs / 100#)
+End Sub
+
+Sub Gif89aDraw (gifId As Long, x As Long, y As Long)
+    Dim availWidth As Long
+    Dim availHeight As Long
+    Dim imageWidth As Long
+    Dim imageHeight As Long
+    Dim imageHandle As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageWidth = Gif89aItems(gifId).WidthPx
+    imageHeight = Gif89aItems(gifId).HeightPx
+    availWidth = _Width - x
+    availHeight = _Height - y
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+
+    If imageHandle > -2 Then Exit Sub
+    If imageWidth <= 0 Or imageHeight <= 0 Then Exit Sub
+    If availWidth <= 0 Or availHeight <= 0 Then Exit Sub
+
+    If imageWidth <= availWidth And imageHeight <= availHeight Then
+        _PutImage (x, y), imageHandle
+    Else
+        Gif89aDrawFit gifId, x, y, availWidth, availHeight
+    End If
+End Sub
+
+Sub Gif89aDrawFit (gifId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    Dim imageHandle As Long
+    Dim srcWidth As Long
+    Dim srcHeight As Long
+    Dim drawWidth As Long
+    Dim drawHeight As Long
+    Dim offsetX As Long
+    Dim offsetY As Long
+    Dim scaleX As Double
+    Dim scaleY As Double
+    Dim scaleVal As Double
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+    If imageHandle > -2 Then Exit Sub
+
+    srcWidth = Gif89aItems(gifId).WidthPx
+    srcHeight = Gif89aItems(gifId).HeightPx
+    If srcWidth <= 0 Or srcHeight <= 0 Then Exit Sub
+
+    scaleX = boxWidth / srcWidth
+    scaleY = boxHeight / srcHeight
+    scaleVal = scaleX
+    If scaleY < scaleVal Then scaleVal = scaleY
+    If scaleVal <= 0 Then Exit Sub
+
+    drawWidth = CLng(srcWidth * scaleVal)
+    drawHeight = CLng(srcHeight * scaleVal)
+    If drawWidth < 1 Then drawWidth = 1
+    If drawHeight < 1 Then drawHeight = 1
+
+    offsetX = x + (boxWidth - drawWidth) \ 2
+    offsetY = y + (boxHeight - drawHeight) \ 2
+
+    _PutImage (offsetX, offsetY)-(offsetX + drawWidth - 1, offsetY + drawHeight - 1), imageHandle, 0
+End Sub
+Sub Gif89aDrawStretch (gifId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    Dim imageHandle As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+    If imageHandle > -2 Then Exit Sub
+
+    _PutImage (x, y)-(x + boxWidth - 1, y + boxHeight - 1), imageHandle, 0
+End Sub
+
+
+Function Gif89aFrameCount& (gifId As Long)
+    Gif89aFrameCount = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aFrameCount = Gif89aItems(gifId).FrameCount
+End Function
+
+Function Gif89aWidth& (gifId As Long)
+    Gif89aWidth = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aWidth = Gif89aItems(gifId).WidthPx
+End Function
+
+Function Gif89aHeight& (gifId As Long)
+    Gif89aHeight = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aHeight = Gif89aItems(gifId).HeightPx
+End Function
+
+Function Gif89aIsPlaying% (gifId As Long)
+    Gif89aIsPlaying = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aIsPlaying = Gif89aItems(gifId).Playing
+End Function
+
+Function Gif89aIsLoaded% (gifId As Long)
+    Gif89aIsLoaded = Gif89aValidId(gifId)
+End Function
+
+Function Gif89aFormat& (gifId As Long)
+    Gif89aFormat = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+
+    If Gif89aItems(gifId).Is89a <> 0 Then
+        Gif89aFormat = GIF89A_FMT_GIF89A
+    Else
+        Gif89aFormat = GIF89A_FMT_GIF87A
+    End If
+End Function
+
+Function Gif89aError$ (gifId As Long)
+    Gif89aError = ""
+    If gifId < 0 Then Exit Function
+    If gifId > UBound(Gif89aErrorTexts) Then Exit Function
+    Gif89aError = Gif89aErrorTexts(gifId)
+End Function
+
+Function Gif89aSaveFrame% (gifId As Long, frameIndex As Long, fileName As String)
+    Dim tempCanvas As Long
+    Dim tempRestore As Long
+    Dim frameLoop As Long
+    Dim pixelCount As Long
+
+    Gif89aSaveFrame = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    pixelCount = Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    If pixelCount <= 0 Then Exit Function
+
+    tempCanvas = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    tempRestore = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    If tempCanvas > -2 Or tempRestore > -2 Then
+        If tempCanvas < -1 Then _FreeImage tempCanvas
+        If tempRestore < -1 Then _FreeImage tempRestore
+        Exit Function
+    End If
+
+    Gif89aFillImage tempCanvas, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aFillImage tempRestore, pixelCount, Gif89aItems(gifId).BgColor
+
+    For frameLoop = 0 To frameIndex
+        If frameLoop > 0 Then
+            Gif89aApplyDisposalToHandles gifId, frameLoop - 1, tempCanvas, tempRestore
+        End If
+        Gif89aRenderFrameToHandles gifId, frameLoop, tempCanvas, tempRestore
+    Next frameLoop
+
+    _SaveImage fileName, tempCanvas
+    Gif89aSaveFrame = -1
+
+    _FreeImage tempCanvas
+    _FreeImage tempRestore
+End Function
+
+Function Gif89aCurrentFrame& (gifId As Long)
+    Gif89aCurrentFrame = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aCurrentFrame = Gif89aItems(gifId).CurrentFrame
+End Function
+
+Function Gif89aAllocSlot& ()
+    Dim slotIndex As Long
+    Dim upperIndex As Long
+
+    upperIndex = UBound(Gif89aItems)
+    For slotIndex = 0 To upperIndex
+        If Gif89aItems(slotIndex).Used = 0 Then
+            Gif89aAllocSlot = slotIndex
+            Exit Function
+        End If
+    Next slotIndex
+
+    ReDim _Preserve Gif89aItems(0 To upperIndex + 1) As Gif89aStore
+    ReDim _Preserve Gif89aRawData(0 To upperIndex + 1) As String
+    ReDim _Preserve Gif89aErrorTexts(0 To upperIndex + 1) As String
+    Gif89aAllocSlot = upperIndex + 1
+End Function
+
+Function Gif89aAppendFrameSlot& ()
+    Dim newIndex As Long
+
+    If UBound(Gif89aFrames) = 0 Then
+        If Gif89aFrames(0).Used = 0 Then
+            Gif89aAppendFrameSlot = 0
+            Exit Function
+        End If
+    End If
+
+    newIndex = UBound(Gif89aFrames) + 1
+    ReDim _Preserve Gif89aFrames(0 To newIndex) As Gif89aFrameStore
+    Gif89aAppendFrameSlot = newIndex
+End Function
+
+Function Gif89aValidId% (gifId As Long)
+    Gif89aValidId = 0
+    If gifId < 0 Then Exit Function
+    If gifId > UBound(Gif89aItems) Then Exit Function
+    If Gif89aItems(gifId).Used = 0 Then Exit Function
+    Gif89aValidId = -1
+End Function
+
+Sub Gif89aResetRenderState (gifId As Long)
+    Dim pixelCount As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    pixelCount = Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    If pixelCount <= 0 Then Exit Sub
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Then
+        Gif89aItems(gifId).CanvasHandle = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    End If
+    If Gif89aItems(gifId).RestoreHandle > -2 Then
+        Gif89aItems(gifId).RestoreHandle = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    End If
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Then Exit Sub
+    If Gif89aItems(gifId).RestoreHandle > -2 Then Exit Sub
+
+    Gif89aFillImage Gif89aItems(gifId).CanvasHandle, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aFillImage Gif89aItems(gifId).RestoreHandle, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aItems(gifId).RenderedFrame = -1
+End Sub
+
+Function Gif89aEnsureFrameRendered% (gifId As Long, targetFrame As Long)
+    Dim frameLoop As Long
+    Dim startFrame As Long
+
+    Gif89aEnsureFrameRendered = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If targetFrame < 0 Then Exit Function
+    If targetFrame >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then
+        Gif89aResetRenderState gifId
+    End If
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then Exit Function
+
+    If targetFrame = Gif89aItems(gifId).RenderedFrame Then
+        Gif89aEnsureFrameRendered = -1
+        Exit Function
+    End If
+
+    If targetFrame < Gif89aItems(gifId).RenderedFrame Then
+        Gif89aResetRenderState gifId
+        If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then Exit Function
+    End If
+
+    startFrame = Gif89aItems(gifId).RenderedFrame + 1
+    If startFrame < 0 Then startFrame = 0
+
+    For frameLoop = startFrame To targetFrame
+        If frameLoop > 0 Then
+            Gif89aApplyDisposalToHandles gifId, frameLoop - 1, Gif89aItems(gifId).CanvasHandle, Gif89aItems(gifId).RestoreHandle
+        End If
+        Gif89aRenderFrameToHandles gifId, frameLoop, Gif89aItems(gifId).CanvasHandle, Gif89aItems(gifId).RestoreHandle
+        Gif89aItems(gifId).RenderedFrame = frameLoop
+    Next frameLoop
+
+    Gif89aEnsureFrameRendered = -1
+End Function
+
+Sub Gif89aApplyDisposalToHandles (gifId As Long, frameIndex As Long, canvasHandle As Long, restoreHandle As Long)
+    Dim frameSlot As Long
+    Dim fillColor As _Unsigned Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If frameIndex < 0 Then Exit Sub
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Sub
+
+    frameSlot = Gif89aItems(gifId).FrameStart + frameIndex
+    fillColor = Gif89aItems(gifId).BgColor
+
+    Select Case Gif89aFrames(frameSlot).Disposal
+        Case 2
+            Gif89aClearRectInImage canvasHandle, Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, Gif89aFrames(frameSlot).LeftPx, Gif89aFrames(frameSlot).TopPx, Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx, fillColor
+        Case 3
+            Gif89aCopyImagePixels restoreHandle, canvasHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    End Select
+End Sub
+
+Sub Gif89aRenderFrameToHandles (gifId As Long, frameIndex As Long, canvasHandle As Long, restoreHandle As Long)
+    Dim frameSlot As Long
+    Dim palR(0 To 255) As Integer
+    Dim palG(0 To 255) As Integer
+    Dim palB(0 To 255) As Integer
+    Dim palOfs As Long
+    Dim palCount As Long
+    Dim ofs As Long
+    Dim packedData As String
+    Dim pixelCount As Long
+    Dim i As Long
+    ReDim frameIndexData(0) As Integer
+    ReDim drawIndexData(0) As Integer
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If frameIndex < 0 Then Exit Sub
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Sub
+
+    frameSlot = Gif89aItems(gifId).FrameStart + frameIndex
+
+    If Gif89aFrames(frameSlot).Disposal = 3 Then
+        Gif89aCopyImagePixels canvasHandle, restoreHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    End If
+
+    If Gif89aFrames(frameSlot).LocalTableFlag <> 0 Then
+        palOfs = Gif89aFrames(frameSlot).LocalTableOfs
+        palCount = Gif89aFrames(frameSlot).LocalTableCount
+    Else
+        palOfs = Gif89aItems(gifId).GlobalTableOfs
+        palCount = Gif89aItems(gifId).GlobalTableCount
+    End If
+
+    If palOfs > 0 And palCount > 0 Then
+        Gif89aReadColorTable Gif89aRawData(gifId), palOfs, palCount, palR(), palG(), palB()
+    Else
+        For i = 0 To 255
+            palR(i) = 0
+            palG(i) = 0
+            palB(i) = 0
+        Next i
+    End If
+
+    ofs = Gif89aFrames(frameSlot).ImageDataOfs
+    packedData = Gif89aReadSubBlocks(Gif89aRawData(gifId), ofs)
+
+    pixelCount = Gif89aFrames(frameSlot).WidthPx * Gif89aFrames(frameSlot).HeightPx
+    If pixelCount <= 0 Then Exit Sub
+
+    ReDim frameIndexData(0 To pixelCount - 1) As Integer
+    ReDim drawIndexData(0 To pixelCount - 1) As Integer
+
+    Gif89aLzwDecode packedData, Gif89aFrames(frameSlot).LzwMinCodeSize, pixelCount, frameIndexData()
+
+    If Gif89aFrames(frameSlot).Interlaced <> 0 Then
+        Gif89aDeinterlace frameIndexData(), drawIndexData(), Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx
+    Else
+        For i = 0 To pixelCount - 1
+            drawIndexData(i) = frameIndexData(i)
+        Next i
+    End If
+
+    Gif89aBlitFrameToImage canvasHandle, Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, Gif89aFrames(frameSlot).LeftPx, Gif89aFrames(frameSlot).TopPx, Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx, drawIndexData(), palR(), palG(), palB(), Gif89aFrames(frameSlot).TransparentFlag, Gif89aFrames(frameSlot).TransparentIndex
+End Sub
+
+Sub Gif89aFillImage (imageHandle As Long, pixelCount As Long, fillColor As _Unsigned Long)
+    Dim mem As _MEM
+    Dim pixelIndex As Long
+    Dim byteIndex As _Offset
+
+    If imageHandle > -2 Then Exit Sub
+    If pixelCount <= 0 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+    byteIndex = mem.OFFSET
+
+    For pixelIndex = 0 To pixelCount - 1
+        _MemPut mem, byteIndex, fillColor As _UNSIGNED LONG
+        byteIndex = byteIndex + 4
+    Next pixelIndex
+
+    _MemFree mem
+End Sub
+
+Sub Gif89aCopyImagePixels (srcHandle As Long, dstHandle As Long, pixelCount As Long)
+    Dim srcMem As _MEM
+    Dim dstMem As _MEM
+    Dim pixelIndex As Long
+    Dim srcByteIndex As _Offset
+    Dim dstByteIndex As _Offset
+    Dim rgbaValue As _Unsigned Long
+
+    If srcHandle > -2 Then Exit Sub
+    If dstHandle > -2 Then Exit Sub
+    If pixelCount <= 0 Then Exit Sub
+
+    srcMem = _MemImage(srcHandle)
+    dstMem = _MemImage(dstHandle)
+
+    srcByteIndex = srcMem.OFFSET
+    dstByteIndex = dstMem.OFFSET
+
+    For pixelIndex = 0 To pixelCount - 1
+        rgbaValue = _MemGet(srcMem, srcByteIndex, _Unsigned Long)
+        _MemPut dstMem, dstByteIndex, rgbaValue As _UNSIGNED LONG
+        srcByteIndex = srcByteIndex + 4
+        dstByteIndex = dstByteIndex + 4
+    Next pixelIndex
+
+    _MemFree srcMem
+    _MemFree dstMem
+End Sub
+
+Sub Gif89aClearRectInImage (imageHandle As Long, screenWidth As Long, screenHeight As Long, leftPx As Long, topPx As Long, frameWidth As Long, frameHeight As Long, fillColor As _Unsigned Long)
+    Dim mem As _MEM
+    Dim x As Long
+    Dim y As Long
+    Dim dstX As Long
+    Dim dstY As Long
+    Dim byteIndex As _Offset
+
+    If imageHandle > -2 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+
+    For y = 0 To frameHeight - 1
+        dstY = topPx + y
+        If dstY >= 0 And dstY < screenHeight Then
+            For x = 0 To frameWidth - 1
+                dstX = leftPx + x
+                If dstX >= 0 And dstX < screenWidth Then
+                    byteIndex = mem.OFFSET + ((dstY * screenWidth + dstX) * 4)
+                    _MemPut mem, byteIndex, fillColor As _UNSIGNED LONG
+                End If
+            Next x
+        End If
+    Next y
+
+    _MemFree mem
+End Sub
+
+Sub Gif89aBlitFrameToImage (imageHandle As Long, screenWidth As Long, screenHeight As Long, leftPx As Long, topPx As Long, frameWidth As Long, frameHeight As Long, decodedIndex() As Integer, palR() As Integer, palG() As Integer, palB() As Integer, transparentFlag As Integer, transparentIndex As Integer)
+    Dim mem As _MEM
+    Dim x As Long
+    Dim y As Long
+    Dim frameScan As Long
+    Dim dstX As Long
+    Dim dstY As Long
+    Dim byteIndex As _Offset
+    Dim colorIndex As Integer
+    Dim rgbaValue As _Unsigned Long
+
+    If imageHandle > -2 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+    frameScan = 0
+
+    For y = 0 To frameHeight - 1
+        dstY = topPx + y
+        If dstY >= 0 And dstY < screenHeight Then
+            For x = 0 To frameWidth - 1
+                dstX = leftPx + x
+                If dstX >= 0 And dstX < screenWidth Then
+                    colorIndex = decodedIndex(frameScan)
+                    If transparentFlag = 0 Or colorIndex <> transparentIndex Then
+                        rgbaValue = _RGBA32(palR(colorIndex), palG(colorIndex), palB(colorIndex), 255)
+                        byteIndex = mem.OFFSET + ((dstY * screenWidth + dstX) * 4)
+                        _MemPut mem, byteIndex, rgbaValue As _UNSIGNED LONG
+                    End If
+                End If
+                frameScan = frameScan + 1
+            Next x
+        Else
+            frameScan = frameScan + frameWidth
+        End If
+    Next y
+
+    _MemFree mem
+End Sub
+
+Function Gif89aReadByte% (rawData As String, ofs As Long)
+    If ofs < 1 Or ofs > Len(rawData) Then
+        Gif89aReadByte = 0
+    Else
+        Gif89aReadByte = Asc(Mid$(rawData, ofs, 1))
+    End If
+    ofs = ofs + 1
+End Function
+
+Function Gif89aReadWord& (rawData As String, ofs As Long)
+    Dim loByte As Integer
+    Dim hiByte As Integer
+
+    loByte = Gif89aReadByte(rawData, ofs)
+    hiByte = Gif89aReadByte(rawData, ofs)
+    Gif89aReadWord = loByte Or _ShL(hiByte, 8)
+End Function
+
+Function Gif89aReadSubBlocks$ (rawData As String, ofs As Long)
+    Dim blockLen As Integer
+    Dim resultText As String
+
+    resultText = ""
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+        If ofs + blockLen - 1 > Len(rawData) Then Exit Do
+        resultText = resultText + Mid$(rawData, ofs, blockLen)
+        ofs = ofs + blockLen
+    Loop
+
+    Gif89aReadSubBlocks = resultText
+End Function
+
+Sub Gif89aSkipSubBlocks (rawData As String, ofs As Long)
+    Dim blockLen As Integer
+
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+        ofs = ofs + blockLen
+        If ofs > Len(rawData) + 1 Then Exit Do
+    Loop
+End Sub
+
+Sub Gif89aReadColorTable (rawData As String, ofs As Long, colorCount As Long, palR() As Integer, palG() As Integer, palB() As Integer)
+    Dim colorIndex As Long
+
+    For colorIndex = 0 To colorCount - 1
+        palR(colorIndex) = Gif89aReadByte(rawData, ofs)
+        palG(colorIndex) = Gif89aReadByte(rawData, ofs)
+        palB(colorIndex) = Gif89aReadByte(rawData, ofs)
+    Next colorIndex
+End Sub
+
+Sub Gif89aLzwDecode (packedData As String, minCodeSize As Integer, expectedSize As Long, decodedIndex() As Integer)
+    Dim clearCode As Long
+    Dim endCode As Long
+    Dim nextCode As Long
+    Dim codeSize As Integer
+    Dim codeLimit As Long
+    Dim bitIndex As Long
+    Dim oldCode As Long
+    Dim code As Long
+    Dim inCode As Long
+    Dim firstValue As Integer
+    Dim outCount As Long
+    Dim stackCount As Long
+    Dim scanIndex As Long
+    ReDim prefix(0 To 4095) As Long
+    ReDim suffix(0 To 4095) As Integer
+    ReDim stack(0 To 4095) As Integer
+
+    clearCode = _ShL(1, minCodeSize)
+    endCode = clearCode + 1
+    nextCode = endCode + 1
+    codeSize = minCodeSize + 1
+    codeLimit = _ShL(1, codeSize)
+    bitIndex = 0
+    oldCode = -1
+    firstValue = 0
+    outCount = 0
+
+    For scanIndex = 0 To clearCode - 1
+        prefix(scanIndex) = -1
+        suffix(scanIndex) = scanIndex
+    Next scanIndex
+
+    Do While outCount < expectedSize
+        code = Gif89aReadCode(packedData, bitIndex, codeSize)
+
+        If code = clearCode Then
+            codeSize = minCodeSize + 1
+            codeLimit = _ShL(1, codeSize)
+            nextCode = endCode + 1
+            oldCode = -1
+
+            code = Gif89aReadCode(packedData, bitIndex, codeSize)
+            If code = endCode Then Exit Do
+            If code < 0 Then Exit Do
+            If outCount < expectedSize Then
+                decodedIndex(outCount) = code And 255
+                outCount = outCount + 1
+            End If
+            firstValue = code And 255
+            oldCode = code
+        ElseIf code = endCode Then
+            Exit Do
+        Else
+            If oldCode = -1 Then
+                If outCount < expectedSize Then
+                    decodedIndex(outCount) = code And 255
+                    outCount = outCount + 1
+                End If
+                firstValue = code And 255
+                oldCode = code
+            Else
+                inCode = code
+                stackCount = 0
+
+                If code >= nextCode Then
+                    stack(stackCount) = firstValue
+                    stackCount = stackCount + 1
+                    code = oldCode
+                End If
+
+                Do While code >= clearCode
+                    stack(stackCount) = suffix(code)
+                    stackCount = stackCount + 1
+                    code = prefix(code)
+                    If code < 0 Then Exit Do
+                Loop
+
+                If code < 0 Then Exit Do
+
+                firstValue = suffix(code)
+                stack(stackCount) = firstValue
+                stackCount = stackCount + 1
+
+                Do While stackCount > 0 And outCount < expectedSize
+                    stackCount = stackCount - 1
+                    decodedIndex(outCount) = stack(stackCount)
+                    outCount = outCount + 1
+                Loop
+
+                If nextCode < 4096 Then
+                    prefix(nextCode) = oldCode
+                    suffix(nextCode) = firstValue
+                    nextCode = nextCode + 1
+                    If nextCode >= codeLimit And codeSize < 12 Then
+                        codeSize = codeSize + 1
+                        codeLimit = _ShL(1, codeSize)
+                    End If
+                End If
+
+                oldCode = inCode
+            End If
+        End If
+    Loop
+
+    For scanIndex = outCount To expectedSize - 1
+        decodedIndex(scanIndex) = 0
+    Next scanIndex
+End Sub
+
+Function Gif89aReadCode& (packedData As String, bitIndex As Long, codeSize As Integer)
+    Dim codeValue As Long
+    Dim bitStep As Integer
+    Dim byteIndex As Long
+    Dim sourceByte As Integer
+
+    codeValue = 0
+    For bitStep = 0 To codeSize - 1
+        byteIndex = (bitIndex \ 8) + 1
+        If byteIndex > Len(packedData) Then Exit For
+        sourceByte = Asc(Mid$(packedData, byteIndex, 1))
+        If (sourceByte And _ShL(1, bitIndex And 7)) <> 0 Then
+            codeValue = codeValue Or _ShL(1, bitStep)
+        End If
+        bitIndex = bitIndex + 1
+    Next bitStep
+
+    Gif89aReadCode = codeValue
+End Function
+
+
+Function Gif89aReadLoopCountFromAppExt& (rawData As String, ofs As Long)
+    Dim blockLen As Integer
+    Dim subId As Integer
+    Dim loopCount As Long
+
+    Gif89aReadLoopCountFromAppExt = 1
+
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+
+        If blockLen = 3 Then
+            subId = Gif89aReadByte(rawData, ofs)
+            loopCount = Gif89aReadWord(rawData, ofs)
+            If subId = 1 Then
+                Gif89aReadLoopCountFromAppExt = loopCount
+            End If
+            If blockLen > 3 Then ofs = ofs + (blockLen - 3)
+        Else
+            ofs = ofs + blockLen
+        End If
+
+        If ofs > Len(rawData) + 1 Then Exit Do
+    Loop
+End Function
+
+Sub Gif89aDeinterlace (srcIndex() As Integer, dstIndex() As Integer, frameWidth As Long, frameHeight As Long)
+    Dim x As Long
+    Dim y As Long
+    Dim srcScan As Long
+
+    srcScan = 0
+
+    For y = 0 To frameHeight - 1 Step 8
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    For y = 4 To frameHeight - 1 Step 8
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    For y = 2 To frameHeight - 1 Step 4
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    For y = 1 To frameHeight - 1 Step 2
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+End Sub
+
