@@ -107,6 +107,8 @@ Function Gif89aOpen& (fileName As String)
     Gif89aItems(slotIndex).FileLoopCount = 1
     Gif89aItems(slotIndex).LoopIteration = 1
     Gif89aItems(slotIndex).NextTick = 0
+    Gif89aItems(slotIndex).RemainingDelay = 0
+    Gif89aItems(slotIndex).LastRawTimer = 0
     Gif89aItems(slotIndex).CanvasHandle = 0
     Gif89aItems(slotIndex).RestoreHandle = 0
     Gif89aItems(slotIndex).RenderedFrame = -1
@@ -235,7 +237,7 @@ Function Gif89aOpen& (fileName As String)
     Gif89aItems(slotIndex).FileLoopCount = fileLoopCount
     Gif89aItems(slotIndex).LoopIteration = 1
     Gif89aResetRenderState slotIndex
-    Gif89aItems(slotIndex).NextTick = Timer + (Gif89aFrames(frameStart).DelayCs / 100#)
+    Gif89aItems(slotIndex).NextTick = Gif89aTimeAdd(Timer, Gif89aFrames(frameStart).DelayCs / 100#)
 
     Gif89aOpen = slotIndex
 End Function
@@ -402,6 +404,8 @@ Sub Gif89aClose (gifId As Long)
     Gif89aItems(gifId).FileLoopCount = 1
     Gif89aItems(gifId).LoopIteration = 1
     Gif89aItems(gifId).NextTick = 0
+    Gif89aItems(gifId).RemainingDelay = 0
+    Gif89aItems(gifId).LastRawTimer = 0
     Gif89aItems(gifId).CanvasHandle = 0
     Gif89aItems(gifId).RestoreHandle = 0
     Gif89aItems(gifId).RenderedFrame = -1
@@ -422,53 +426,77 @@ End Sub
 
 Sub Gif89aPlay (gifId As Long)
     Dim frameSlot As Long
+    Dim delaySec As Double
+    Dim nowValue As Double
 
     If Gif89aValidId(gifId) = 0 Then Exit Sub
     If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
 
+    ' Start playback from a fresh absolute schedule based on the current frame.
+    nowValue = Timer
     Gif89aItems(gifId).Playing = -1
     Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).RemainingDelay = 0
 
     frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
     If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
-    Gif89aItems(gifId).NextTick = Timer + (Gif89aFrames(frameSlot).DelayCs / 100#)
+    delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+    Gif89aItems(gifId).LastRawTimer = nowValue
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(nowValue, delaySec)
 End Sub
 
 Sub Gif89aStop (gifId As Long)
     If Gif89aValidId(gifId) = 0 Then Exit Sub
-    Dim N as long
+    Dim N As Long
+
     Gif89aItems(gifId).Playing = 0
     Gif89aItems(gifId).Paused = 0
     Gif89aItems(gifId).CurrentFrame = 0
     Gif89aItems(gifId).LoopIteration = 1
     Gif89aItems(gifId).NextTick = 0
+    Gif89aItems(gifId).RemainingDelay = 0
+    Gif89aItems(gifId).LastRawTimer = 0
 
     Gif89aResetRenderState gifId
-    N = Gif89aEnsureFrameRendered (gifId, 0)
+    N = Gif89aEnsureFrameRendered(gifId, 0)
 End Sub
 
 
 Sub Gif89aPause (gifId As Long)
+    Dim nowValue As Double
+
     If Gif89aValidId(gifId) = 0 Then Exit Sub
     If Gif89aItems(gifId).Playing = 0 Then Exit Sub
 
+    ' Preserve the remaining frame time so resume continues the current frame.
+    nowValue = Timer
+    Gif89aItems(gifId).RemainingDelay = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, nowValue)
+    Gif89aItems(gifId).LastRawTimer = nowValue
     Gif89aItems(gifId).Playing = 0
     Gif89aItems(gifId).Paused = -1
 End Sub
 
 Sub Gif89aResume (gifId As Long)
     Dim frameSlot As Long
+    Dim delaySec As Double
+    Dim nowValue As Double
 
     If Gif89aValidId(gifId) = 0 Then Exit Sub
     If Gif89aItems(gifId).Paused = 0 Then Exit Sub
     If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
 
-    Gif89aItems(gifId).Paused = 0
-    Gif89aItems(gifId).Playing = -1
-
+    ' Resume from the leftover delay instead of restarting a full frame delay.
+    nowValue = Timer
     frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
     If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
-    Gif89aItems(gifId).NextTick = Timer + (Gif89aFrames(frameSlot).DelayCs / 100#)
+    delaySec = Gif89aItems(gifId).RemainingDelay
+    If delaySec <= 0 Then delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).Playing = -1
+    Gif89aItems(gifId).LastRawTimer = nowValue
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(nowValue, delaySec)
+    Gif89aItems(gifId).RemainingDelay = 0
 End Sub
 
 Sub Gif89aSetLoop (gifId As Long, loopMode As Long)
@@ -485,59 +513,84 @@ End Sub
 Sub Gif89aUpdate (gifId As Long)
     Dim tickNow As Double
     Dim nextFrame As Long
-    Dim frameSlot As Long, N as LONG
+    Dim frameSlot As Long
+    Dim N As Long
     Dim allowLoop As Integer
+    Dim stepCount As Long
+    Dim delaySec As Double
+    Dim jumpFlag As Integer
 
     If Gif89aValidId(gifId) = 0 Then Exit Sub
     If Gif89aItems(gifId).Playing = 0 Then Exit Sub
     If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
 
     tickNow = Timer
-    If tickNow < Gif89aItems(gifId).NextTick Then Exit Sub
 
-    nextFrame = Gif89aItems(gifId).CurrentFrame + 1
-
-    If nextFrame >= Gif89aItems(gifId).FrameCount Then
-        allowLoop = 0
-
-        Select Case Gif89aItems(gifId).LoopMode
-            Case GIF89A_LOOP_FOREVER
-                allowLoop = -1
-
-            Case GIF89A_LOOP_ONCE
-                allowLoop = 0
-
-            Case Else
-                If Gif89aItems(gifId).FileLoopCount = 0 Then
-                    allowLoop = -1
-                ElseIf Gif89aItems(gifId).LoopIteration < Gif89aItems(gifId).FileLoopCount Then
-                    allowLoop = -1
-                End If
-        End Select
-
-        If allowLoop = 0 Then
-            Gif89aItems(gifId).CurrentFrame = Gif89aItems(gifId).FrameCount - 1
-            Gif89aItems(gifId).Playing = 0
-            Gif89aItems(gifId).Paused = 0
-            N = Gif89aEnsureFrameRendered (gifId, Gif89aItems(gifId).CurrentFrame)
-            Exit Sub
-        End If
-
-        nextFrame = 0
-        If Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT Then
-            If Gif89aItems(gifId).FileLoopCount > 0 Then
-                Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
-            End If
-        ElseIf Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FOREVER Then
-            Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
-        End If
+    ' Ignore manual system clock jumps but keep the normal midnight wrap working.
+    jumpFlag = 0
+    If Gif89aItems(gifId).LastRawTimer > 0 Then
+        jumpFlag = Gif89aClockJumped(gifId, Gif89aItems(gifId).LastRawTimer, tickNow)
+    End If
+    If jumpFlag Then
+        Gif89aResyncAfterClockJump gifId, tickNow
+        Exit Sub
     End If
 
-    Gif89aItems(gifId).CurrentFrame = nextFrame
-    If Gif89aEnsureFrameRendered(gifId, nextFrame) = 0 Then Exit Sub
+    Gif89aItems(gifId).LastRawTimer = tickNow
+    If Gif89aTimeReached(Gif89aItems(gifId).NextTick, tickNow) = 0 Then Exit Sub
 
-    frameSlot = Gif89aItems(gifId).FrameStart + nextFrame
-    Gif89aItems(gifId).NextTick = tickNow + (Gif89aFrames(frameSlot).DelayCs / 100#)
+    ' Advance against the scheduled timeline so playback can catch up after lag.
+    stepCount = 0
+    Do While Gif89aTimeReached(Gif89aItems(gifId).NextTick, tickNow)
+        nextFrame = Gif89aItems(gifId).CurrentFrame + 1
+
+        If nextFrame >= Gif89aItems(gifId).FrameCount Then
+            allowLoop = 0
+
+            Select Case Gif89aItems(gifId).LoopMode
+                Case GIF89A_LOOP_FOREVER
+                    allowLoop = -1
+
+                Case GIF89A_LOOP_ONCE
+                    allowLoop = 0
+
+                Case Else
+                    If Gif89aItems(gifId).FileLoopCount = 0 Then
+                        allowLoop = -1
+                    ElseIf Gif89aItems(gifId).LoopIteration < Gif89aItems(gifId).FileLoopCount Then
+                        allowLoop = -1
+                    End If
+            End Select
+
+            If allowLoop = 0 Then
+                Gif89aItems(gifId).CurrentFrame = Gif89aItems(gifId).FrameCount - 1
+                Gif89aItems(gifId).Playing = 0
+                Gif89aItems(gifId).Paused = 0
+                Gif89aItems(gifId).RemainingDelay = 0
+                N = Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame)
+                Exit Sub
+            End If
+
+            nextFrame = 0
+            If Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT Then
+                If Gif89aItems(gifId).FileLoopCount > 0 Then
+                    Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+                End If
+            ElseIf Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FOREVER Then
+                Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+            End If
+        End If
+
+        Gif89aItems(gifId).CurrentFrame = nextFrame
+        If Gif89aEnsureFrameRendered(gifId, nextFrame) = 0 Then Exit Sub
+
+        frameSlot = Gif89aItems(gifId).FrameStart + nextFrame
+        delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+        Gif89aItems(gifId).NextTick = Gif89aTimeAdd(Gif89aItems(gifId).NextTick, delaySec)
+
+        stepCount = stepCount + 1
+        If stepCount >= 32 Then Exit Do
+    Loop
 End Sub
 
 Sub Gif89aDraw (gifId As Long, x As Long, y As Long)
@@ -1185,7 +1238,6 @@ Function Gif89aReadCode& (packedData As String, bitIndex As Long, codeSize As In
     Dim bitStep As Integer
     Dim byteIndex As Long
     Dim sourceByte As Integer
-
     codeValue = 0
     For bitStep = 0 To codeSize - 1
         byteIndex = (bitIndex \ 8) + 1
@@ -1200,6 +1252,109 @@ Function Gif89aReadCode& (packedData As String, bitIndex As Long, codeSize As In
     Gif89aReadCode = codeValue
 End Function
 
+
+Function Gif89aTimeAdd# (baseTime As Double, deltaSec As Double)
+    Dim resultTime As Double
+
+    ' Add seconds to a TIMER value and wrap across midnight.
+    ' QB64PE should not use the function name inside expressions here.
+    resultTime = baseTime + deltaSec
+    If resultTime >= 86400# Then resultTime = resultTime - 86400#
+
+    Gif89aTimeAdd = resultTime
+End Function
+
+Function Gif89aTimeReached% (targetTime As Double, currentTime As Double)
+    ' Compare TIMER values safely even when playback crosses midnight.
+    Gif89aTimeReached = 0
+
+    If Abs(currentTime - targetTime) < 43200# Then
+        If currentTime >= targetTime Then Gif89aTimeReached = -1
+    Else
+        If currentTime < targetTime Then Gif89aTimeReached = -1
+    End If
+End Function
+
+Function Gif89aTimeRemaining# (targetTime As Double, currentTime As Double)
+    Dim resultTime As Double
+    Dim reachedFlag As Integer
+
+    ' Preserve the leftover part of the current frame when pause is pressed.
+    ' Use a local variable so the function name is only assigned at the end.
+    resultTime = 0
+    reachedFlag = Gif89aTimeReached(targetTime, currentTime)
+    If reachedFlag Then
+        Gif89aTimeRemaining = resultTime
+        Exit Function
+    End If
+
+    resultTime = targetTime - currentTime
+    If resultTime < 0 Then resultTime = resultTime + 86400#
+
+    Gif89aTimeRemaining = resultTime
+End Function
+
+Function Gif89aElapsedSince# (previousTime As Double, currentTime As Double)
+    Dim elapsedSec As Double
+
+    ' Keep the midnight wrap behavior intact while measuring TIMER progress.
+    elapsedSec = currentTime - previousTime
+    If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400#
+
+    Gif89aElapsedSince = elapsedSec
+End Function
+
+Function Gif89aClockJumpLimit# (gifId As Long, previousTime As Double)
+    Dim limitSec As Double
+    Dim frameSlot As Long
+
+    limitSec = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, previousTime)
+    If limitSec <= 0 Then
+        frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+        If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+        limitSec = Gif89aFrames(frameSlot).DelayCs / 100#
+    End If
+
+    ' Allow ordinary frame jitter, but treat large raw TIMER jumps as a resync event.
+    limitSec = limitSec + 1#
+    If limitSec < 2# Then limitSec = 2#
+    If limitSec > 10# Then limitSec = 10#
+
+    Gif89aClockJumpLimit = limitSec
+End Function
+
+Function Gif89aClockJumped% (gifId As Long, previousTime As Double, currentTime As Double)
+    Dim jumpFlag As Integer
+    Dim elapsedSec As Double
+    Dim limitSec As Double
+
+    jumpFlag = 0
+    elapsedSec = Gif89aElapsedSince(previousTime, currentTime)
+    limitSec = Gif89aClockJumpLimit(gifId, previousTime)
+    If elapsedSec > limitSec Then jumpFlag = -1
+
+    Gif89aClockJumped = jumpFlag
+End Function
+
+Sub Gif89aResyncAfterClockJump (gifId As Long, currentTime As Double)
+    Dim delaySec As Double
+    Dim previousTime As Double
+    Dim frameSlot As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    ' Re-anchor the current frame after a manual clock change or large TIMER discontinuity.
+    previousTime = Gif89aItems(gifId).LastRawTimer
+    delaySec = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, previousTime)
+    If delaySec <= 0 Then
+        frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+        If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+        delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+    End If
+
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(currentTime, delaySec)
+    Gif89aItems(gifId).LastRawTimer = currentTime
+End Sub
 
 Function Gif89aReadLoopCountFromAppExt& (rawData As String, ofs As Long)
     Dim blockLen As Integer

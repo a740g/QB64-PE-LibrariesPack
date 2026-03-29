@@ -170,6 +170,8 @@ Function ApngOpen& (fileName As String)
     ApngItems(slotIndex).Paused = 0
     ApngItems(slotIndex).LoopMode = APNG_LOOP_FILE_DEFAULT
     ApngItems(slotIndex).NextTick = 0
+    ApngItems(slotIndex).RemainingDelay = 0
+    ApngItems(slotIndex).LastRawTimer = 0
     ApngItems(slotIndex).CompletedLoops = 0
     ApngErrorTexts(slotIndex) = ""
     ApngItems(slotIndex).CanvasHandle = _NewImage(widthPx, heightPx, 32)
@@ -320,6 +322,8 @@ Sub ApngClose (apngId As Long)
     ApngItems(apngId).Paused = 0
     ApngItems(apngId).LoopMode = APNG_LOOP_FILE_DEFAULT
     ApngItems(apngId).NextTick = 0
+    ApngItems(apngId).RemainingDelay = 0
+    ApngItems(apngId).LastRawTimer = 0
     ApngItems(apngId).CompletedLoops = 0
     ApngItems(apngId).CanvasHandle = 0
     ApngItems(apngId).BackupHandle = 0
@@ -341,13 +345,22 @@ Sub ApngFreeAll ()
 End Sub
 
 Sub ApngPlay (apngId As Long)
+    Dim delaySec As Double
+    Dim nowValue As Double
+
     If ApngValidId(apngId) = 0 Then Exit Sub
     If ApngItems(apngId).FrameCount <= 0 Then Exit Sub
+
+    ' Start playback from a fresh absolute schedule based on the current frame.
+    nowValue = Timer
+    delaySec = ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
 
     ApngItems(apngId).Playing = -1
     ApngItems(apngId).Paused = 0
     ApngItems(apngId).CompletedLoops = 0
-    ApngItems(apngId).NextTick = Timer + ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+    ApngItems(apngId).RemainingDelay = 0
+    ApngItems(apngId).LastRawTimer = nowValue
+    ApngItems(apngId).NextTick = ApngTimeAdd(nowValue, delaySec)
 End Sub
 
 Sub ApngStop (apngId As Long)
@@ -357,6 +370,8 @@ Sub ApngStop (apngId As Long)
     ApngItems(apngId).Paused = 0
     ApngItems(apngId).CurrentFrame = 0
     ApngItems(apngId).NextTick = 0
+    ApngItems(apngId).RemainingDelay = 0
+    ApngItems(apngId).LastRawTimer = 0
     ApngItems(apngId).CompletedLoops = 0
 
     ApngResetRenderState apngId
@@ -366,21 +381,37 @@ Sub ApngStop (apngId As Long)
 End Sub
 
 Sub ApngPause (apngId As Long)
+    Dim nowValue As Double
+
     If ApngValidId(apngId) = 0 Then Exit Sub
     If ApngItems(apngId).Playing = 0 Then Exit Sub
 
+    ' Preserve the remaining frame time so resume continues the current frame.
+    nowValue = Timer
+    ApngItems(apngId).RemainingDelay = ApngTimeRemaining(ApngItems(apngId).NextTick, nowValue)
+    ApngItems(apngId).LastRawTimer = nowValue
     ApngItems(apngId).Playing = 0
     ApngItems(apngId).Paused = -1
 End Sub
 
 Sub ApngResume (apngId As Long)
+    Dim delaySec As Double
+    Dim nowValue As Double
+
     If ApngValidId(apngId) = 0 Then Exit Sub
     If ApngItems(apngId).Paused = 0 Then Exit Sub
     If ApngItems(apngId).FrameCount <= 0 Then Exit Sub
 
+    ' Resume from the leftover delay instead of restarting a full frame delay.
+    nowValue = Timer
+    delaySec = ApngItems(apngId).RemainingDelay
+    If delaySec <= 0 Then delaySec = ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+
     ApngItems(apngId).Paused = 0
     ApngItems(apngId).Playing = -1
-    ApngItems(apngId).NextTick = Timer + ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+    ApngItems(apngId).LastRawTimer = nowValue
+    ApngItems(apngId).NextTick = ApngTimeAdd(nowValue, delaySec)
+    ApngItems(apngId).RemainingDelay = 0
 End Sub
 
 Sub ApngSetLoop (apngId As Long, loopMode As Long)
@@ -398,50 +429,75 @@ Sub ApngUpdate (apngId As Long)
     Dim tickNow As Double
     Dim nextFrame As Long
     Dim allowLoop As Integer
-    Dim playCount As Long, N as long
+    Dim playCount As Long
+    Dim N As Long
+    Dim stepCount As Long
+    Dim delaySec As Double
+    Dim jumpFlag As Integer
 
     If ApngValidId(apngId) = 0 Then Exit Sub
     If ApngItems(apngId).Playing = 0 Then Exit Sub
     If ApngItems(apngId).FrameCount <= 1 Then Exit Sub
 
     tickNow = Timer
-    If tickNow < ApngItems(apngId).NextTick Then Exit Sub
 
-    nextFrame = ApngItems(apngId).CurrentFrame + 1
-
-    If nextFrame >= ApngItems(apngId).FrameCount Then
-        allowLoop = 0
-
-        Select Case ApngItems(apngId).LoopMode
-            Case APNG_LOOP_FOREVER
-                allowLoop = -1
-
-            Case APNG_LOOP_ONCE
-                allowLoop = 0
-
-            Case Else
-                playCount = ApngItems(apngId).PlayCount
-                If playCount = 0 Then
-                    allowLoop = -1
-                ElseIf (ApngItems(apngId).CompletedLoops + 1) < playCount Then
-                    allowLoop = -1
-                End If
-        End Select
-
-        If allowLoop = 0 Then
-            ApngItems(apngId).CurrentFrame = ApngItems(apngId).FrameCount - 1
-            ApngItems(apngId).Playing = 0
-            ApngItems(apngId).Paused = 0
-            N = ApngEnsureFrameRendered (apngId, ApngItems(apngId).CurrentFrame)
-            Exit Sub
-        End If
-
-        ApngItems(apngId).CompletedLoops = ApngItems(apngId).CompletedLoops + 1
-        nextFrame = 0
+    ' Ignore manual system clock jumps but keep the normal midnight wrap working.
+    jumpFlag = 0
+    If ApngItems(apngId).LastRawTimer > 0 Then
+        jumpFlag = ApngClockJumped(apngId, ApngItems(apngId).LastRawTimer, tickNow)
+    End If
+    If jumpFlag Then
+        ApngResyncAfterClockJump apngId, tickNow
+        Exit Sub
     End If
 
-    ApngItems(apngId).CurrentFrame = nextFrame
-    ApngItems(apngId).NextTick = tickNow + ApngFrameDelay(apngId, nextFrame)
+    ApngItems(apngId).LastRawTimer = tickNow
+    If ApngTimeReached(ApngItems(apngId).NextTick, tickNow) = 0 Then Exit Sub
+
+    ' Advance against the scheduled timeline so playback can catch up after lag.
+    stepCount = 0
+    Do While ApngTimeReached(ApngItems(apngId).NextTick, tickNow)
+        nextFrame = ApngItems(apngId).CurrentFrame + 1
+
+        If nextFrame >= ApngItems(apngId).FrameCount Then
+            allowLoop = 0
+
+            Select Case ApngItems(apngId).LoopMode
+                Case APNG_LOOP_FOREVER
+                    allowLoop = -1
+
+                Case APNG_LOOP_ONCE
+                    allowLoop = 0
+
+                Case Else
+                    playCount = ApngItems(apngId).PlayCount
+                    If playCount = 0 Then
+                        allowLoop = -1
+                    ElseIf (ApngItems(apngId).CompletedLoops + 1) < playCount Then
+                        allowLoop = -1
+                    End If
+            End Select
+
+            If allowLoop = 0 Then
+                ApngItems(apngId).CurrentFrame = ApngItems(apngId).FrameCount - 1
+                ApngItems(apngId).Playing = 0
+                ApngItems(apngId).Paused = 0
+                ApngItems(apngId).RemainingDelay = 0
+                N = ApngEnsureFrameRendered(apngId, ApngItems(apngId).CurrentFrame)
+                Exit Sub
+            End If
+
+            ApngItems(apngId).CompletedLoops = ApngItems(apngId).CompletedLoops + 1
+            nextFrame = 0
+        End If
+
+        ApngItems(apngId).CurrentFrame = nextFrame
+        delaySec = ApngFrameDelay(apngId, nextFrame)
+        ApngItems(apngId).NextTick = ApngTimeAdd(ApngItems(apngId).NextTick, delaySec)
+
+        stepCount = stepCount + 1
+        If stepCount >= 32 Then Exit Do
+    Loop
 End Sub
 
 Sub ApngDraw (apngId As Long, x As Long, y As Long)
@@ -826,6 +882,99 @@ Function ApngReadByte% (textData As String, ofs As Long)
     If ofs < 1 Or ofs > Len(textData) Then Exit Function
     ApngReadByte = Asc(Mid$(textData, ofs, 1))
 End Function
+
+Function ApngTimeAdd# (baseTime As Double, deltaSec As Double)
+    Dim resultTime As Double
+
+    ' Add seconds to a TIMER value and wrap across midnight.
+    ' QB64PE should not use the function name inside expressions here.
+    resultTime = baseTime + deltaSec
+    If resultTime >= 86400# Then resultTime = resultTime - 86400#
+
+    ApngTimeAdd = resultTime
+End Function
+
+Function ApngTimeReached% (targetTime As Double, currentTime As Double)
+    ' Compare TIMER values safely even when playback crosses midnight.
+    ApngTimeReached = 0
+
+    If Abs(currentTime - targetTime) < 43200# Then
+        If currentTime >= targetTime Then ApngTimeReached = -1
+    Else
+        If currentTime < targetTime Then ApngTimeReached = -1
+    End If
+End Function
+
+Function ApngTimeRemaining# (targetTime As Double, currentTime As Double)
+    Dim resultTime As Double
+    Dim reachedFlag As Integer
+
+    ' Preserve the leftover part of the current frame when pause is pressed.
+    ' Use a local variable so the function name is only assigned at the end.
+    resultTime = 0
+    reachedFlag = ApngTimeReached(targetTime, currentTime)
+    If reachedFlag Then
+        ApngTimeRemaining = resultTime
+        Exit Function
+    End If
+
+    resultTime = targetTime - currentTime
+    If resultTime < 0 Then resultTime = resultTime + 86400#
+
+    ApngTimeRemaining = resultTime
+End Function
+
+Function ApngElapsedSince# (previousTime As Double, currentTime As Double)
+    Dim elapsedSec As Double
+
+    ' Keep the midnight wrap behavior intact while measuring TIMER progress.
+    elapsedSec = currentTime - previousTime
+    If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400#
+
+    ApngElapsedSince = elapsedSec
+End Function
+
+Function ApngClockJumpLimit# (apngId As Long, previousTime As Double)
+    Dim limitSec As Double
+
+    limitSec = ApngTimeRemaining(ApngItems(apngId).NextTick, previousTime)
+    If limitSec <= 0 Then limitSec = ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+
+    ' Allow ordinary frame jitter, but treat large raw TIMER jumps as a resync event.
+    limitSec = limitSec + 1#
+    If limitSec < 2# Then limitSec = 2#
+    If limitSec > 10# Then limitSec = 10#
+
+    ApngClockJumpLimit = limitSec
+End Function
+
+Function ApngClockJumped% (apngId As Long, previousTime As Double, currentTime As Double)
+    Dim jumpFlag As Integer
+    Dim elapsedSec As Double
+    Dim limitSec As Double
+
+    jumpFlag = 0
+    elapsedSec = ApngElapsedSince(previousTime, currentTime)
+    limitSec = ApngClockJumpLimit(apngId, previousTime)
+    If elapsedSec > limitSec Then jumpFlag = -1
+
+    ApngClockJumped = jumpFlag
+End Function
+
+Sub ApngResyncAfterClockJump (apngId As Long, currentTime As Double)
+    Dim delaySec As Double
+    Dim previousTime As Double
+
+    If ApngValidId(apngId) = 0 Then Exit Sub
+
+    ' Re-anchor the current frame after a manual clock change or large TIMER discontinuity.
+    previousTime = ApngItems(apngId).LastRawTimer
+    delaySec = ApngTimeRemaining(ApngItems(apngId).NextTick, previousTime)
+    If delaySec <= 0 Then delaySec = ApngFrameDelay(apngId, ApngItems(apngId).CurrentFrame)
+
+    ApngItems(apngId).NextTick = ApngTimeAdd(currentTime, delaySec)
+    ApngItems(apngId).LastRawTimer = currentTime
+End Sub
 
 Function ApngFrameDelay# (apngId As Long, frameIndex As Long)
     Dim frameSlot As Long

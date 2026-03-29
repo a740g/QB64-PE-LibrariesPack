@@ -45,6 +45,8 @@ Type Gif89aStore
     FileLoopCount As Long
     LoopIteration As Long
     NextTick As Double
+    RemainingDelay As Double
+    LastRawTimer As Double
     CanvasHandle As Long
     RestoreHandle As Long
     RenderedFrame As Long

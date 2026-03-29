@@ -73,6 +73,8 @@ Type FlicStore
     Looping As Integer
     LastTick As Double
     NextTick As Double
+    RemainingDelay As Double
+    LastRawTimer As Double
     CanvasImage As Long
     ImageDirty As Integer
     PaletteDirty As Integer

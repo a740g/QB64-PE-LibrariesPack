@@ -112,6 +112,8 @@ Function FlicOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long
     FlicItems(slotId).Looping = -1
     FlicItems(slotId).LastTick = 0
     FlicItems(slotId).NextTick = 0
+    FlicItems(slotId).RemainingDelay = 0
+    FlicItems(slotId).LastRawTimer = 0
     FlicItems(slotId).CanvasImage = imageHandle
     FlicItems(slotId).ImageDirty = -1
     FlicItems(slotId).PaletteDirty = -1
@@ -190,6 +192,7 @@ Sub FlicClose (flicId As Long)
     FlicItems(flicId).Looping = 0
     FlicItems(flicId).LastTick = 0
     FlicItems(flicId).NextTick = 0
+    FlicItems(flicId).RemainingDelay = 0
     FlicItems(flicId).ImageDirty = 0
     FlicItems(flicId).PaletteDirty = 0
     FlicItems(flicId).DirtyValid = 0
@@ -220,6 +223,7 @@ End Sub
 
 Sub FlicStart (flicId As Long)
     Dim delaySec As Double
+    Dim nowValue As Double
 
     If FlicValidId(flicId) = 0 Then Exit Sub
     If FlicItems(flicId).FrameCount < 1 Then Exit Sub
@@ -227,6 +231,7 @@ Sub FlicStart (flicId As Long)
     FlicItems(flicId).CurrentFrame = 0
     FlicItems(flicId).Playing = -1
     FlicItems(flicId).Paused = 0
+    FlicItems(flicId).RemainingDelay = 0
 
     FlicResetDecodeState flicId
     If FlicEnsureRenderedFrame(flicId, 0) = 0 Then
@@ -237,11 +242,11 @@ Sub FlicStart (flicId As Long)
     delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
     If delaySec <= 0 Then delaySec = .03
 
-    FlicItems(flicId).LastTick = Timer
-    FlicItems(flicId).NextTick = FlicItems(flicId).LastTick + delaySec
-    If FlicItems(flicId).NextTick >= 86400# Then
-        FlicItems(flicId).NextTick = FlicItems(flicId).NextTick - 86400#
-    End If
+    ' Start playback from a fresh absolute schedule based on the current frame.
+    nowValue = Timer
+    FlicItems(flicId).LastTick = nowValue
+    FlicItems(flicId).LastRawTimer = nowValue
+    FlicItems(flicId).NextTick = FlicTimeAdd(FlicItems(flicId).LastTick, delaySec)
 End Sub
 
 Sub FlicStop (flicId As Long)
@@ -250,28 +255,39 @@ Sub FlicStop (flicId As Long)
 End Sub
 
 Sub FlicPause (flicId As Long)
+    Dim nowValue As Double
+
     If FlicValidId(flicId) = 0 Then Exit Sub
     If FlicItems(flicId).Playing = 0 Then Exit Sub
+
+    ' Preserve the remaining frame time so resume continues the current frame.
+    nowValue = Timer
+    FlicItems(flicId).RemainingDelay = FlicTimeRemaining(FlicItems(flicId).NextTick, nowValue)
+    FlicItems(flicId).LastRawTimer = nowValue
     FlicItems(flicId).Paused = -1
 End Sub
 
 Sub FlicResume (flicId As Long)
     Dim delaySec As Double
+    Dim nowValue As Double
 
     If FlicValidId(flicId) = 0 Then Exit Sub
     If FlicItems(flicId).Playing = 0 Then Exit Sub
     If FlicItems(flicId).Paused = 0 Then Exit Sub
 
-    FlicItems(flicId).Paused = 0
-
-    delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
-    If delaySec <= 0 Then delaySec = .03
-
-    FlicItems(flicId).LastTick = Timer
-    FlicItems(flicId).NextTick = FlicItems(flicId).LastTick + delaySec
-    If FlicItems(flicId).NextTick >= 86400# Then
-        FlicItems(flicId).NextTick = FlicItems(flicId).NextTick - 86400#
+    ' Resume from the leftover delay instead of restarting a full frame delay.
+    nowValue = Timer
+    delaySec = FlicItems(flicId).RemainingDelay
+    If delaySec <= 0 Then
+        delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
+        If delaySec <= 0 Then delaySec = .03
     End If
+
+    FlicItems(flicId).Paused = 0
+    FlicItems(flicId).LastTick = nowValue
+    FlicItems(flicId).LastRawTimer = nowValue
+    FlicItems(flicId).NextTick = FlicTimeAdd(FlicItems(flicId).LastTick, delaySec)
+    FlicItems(flicId).RemainingDelay = 0
 End Sub
 
 Sub FlicSetLoop (flicId As Long, loopMode As Long)
@@ -288,12 +304,26 @@ Sub FlicUpdate (flicId As Long)
     Dim currentTime As Double
     Dim delaySec As Double
     Dim nextFrame As Long
+    Dim stepCount As Long
+    Dim jumpFlag As Integer
 
     If FlicValidId(flicId) = 0 Then Exit Sub
     If FlicItems(flicId).Playing = 0 Then Exit Sub
     If FlicItems(flicId).Paused Then Exit Sub
 
     currentTime = Timer
+
+    ' Ignore manual system clock jumps but keep the normal midnight wrap working.
+    jumpFlag = 0
+    If FlicItems(flicId).LastRawTimer > 0 Then
+        jumpFlag = FlicClockJumped(flicId, FlicItems(flicId).LastRawTimer, currentTime)
+    End If
+    If jumpFlag Then
+        FlicResyncAfterClockJump flicId, currentTime
+        Exit Sub
+    End If
+
+    FlicItems(flicId).LastRawTimer = currentTime
     If FlicTimerReached(FlicItems(flicId).NextTick, currentTime) = 0 Then Exit Sub
 
     If FlicItems(flicId).FrameCount < 1 Then
@@ -301,32 +331,36 @@ Sub FlicUpdate (flicId As Long)
         Exit Sub
     End If
 
-    If FlicItems(flicId).CurrentFrame < FlicItems(flicId).FrameCount - 1 Then
-        nextFrame = FlicItems(flicId).CurrentFrame + 1
-        If FlicEnsureRenderedFrame(flicId, nextFrame) = 0 Then
-            FlicItems(flicId).Playing = 0
-            Exit Sub
-        End If
-    Else
-        If FlicItems(flicId).Looping Then
-            If FlicLoopToStart(flicId) = 0 Then
+    ' Advance against the scheduled timeline so playback can catch up after lag.
+    stepCount = 0
+    Do While FlicTimerReached(FlicItems(flicId).NextTick, currentTime)
+        If FlicItems(flicId).CurrentFrame < FlicItems(flicId).FrameCount - 1 Then
+            nextFrame = FlicItems(flicId).CurrentFrame + 1
+            If FlicEnsureRenderedFrame(flicId, nextFrame) = 0 Then
                 FlicItems(flicId).Playing = 0
                 Exit Sub
             End If
         Else
-            FlicItems(flicId).Playing = 0
-            Exit Sub
+            If FlicItems(flicId).Looping Then
+                If FlicLoopToStart(flicId) = 0 Then
+                    FlicItems(flicId).Playing = 0
+                    Exit Sub
+                End If
+            Else
+                FlicItems(flicId).Playing = 0
+                Exit Sub
+            End If
         End If
-    End If
 
-    delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
-    If delaySec <= 0 Then delaySec = .03
+        delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
+        If delaySec <= 0 Then delaySec = .03
 
-    FlicItems(flicId).LastTick = currentTime
-    FlicItems(flicId).NextTick = currentTime + delaySec
-    If FlicItems(flicId).NextTick >= 86400# Then
-        FlicItems(flicId).NextTick = FlicItems(flicId).NextTick - 86400#
-    End If
+        FlicItems(flicId).LastTick = FlicItems(flicId).NextTick
+        FlicItems(flicId).NextTick = FlicTimeAdd(FlicItems(flicId).NextTick, delaySec)
+
+        stepCount = stepCount + 1
+        If stepCount >= 32 Then Exit Do
+    Loop
 End Sub
 
 Sub FlicDraw (flicId As Long, x As Long, y As Long)
@@ -1791,17 +1825,108 @@ Sub FlicDecodeChunkDeltaFLC ()
 End Sub
 
 
-Function FlicTimerReached% (targetTime As Double, currentTime As Double)
-    FlicTimerReached% = 0
+Function FlicElapsedSince# (previousTime As Double, currentTime As Double)
+    Dim elapsedSec As Double
 
-    If currentTime >= targetTime Then
-        FlicTimerReached% = -1
+    ' Keep the midnight wrap behavior intact while measuring TIMER progress.
+    elapsedSec = currentTime - previousTime
+    If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400#
+
+    FlicElapsedSince = elapsedSec
+End Function
+
+Function FlicClockJumpLimit# (flicId As Long, previousTime As Double)
+    Dim limitSec As Double
+
+    limitSec = FlicTimeRemaining(FlicItems(flicId).NextTick, previousTime)
+    If limitSec <= 0 Then
+        limitSec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
+        If limitSec <= 0 Then limitSec = .03
+    End If
+
+    ' Allow ordinary frame jitter, but treat large raw TIMER jumps as a resync event.
+    limitSec = limitSec + 1#
+    If limitSec < 2# Then limitSec = 2#
+    If limitSec > 10# Then limitSec = 10#
+
+    FlicClockJumpLimit = limitSec
+End Function
+
+Function FlicClockJumped% (flicId As Long, previousTime As Double, currentTime As Double)
+    Dim jumpFlag As Integer
+    Dim elapsedSec As Double
+    Dim limitSec As Double
+
+    jumpFlag = 0
+    elapsedSec = FlicElapsedSince(previousTime, currentTime)
+    limitSec = FlicClockJumpLimit(flicId, previousTime)
+    If elapsedSec > limitSec Then jumpFlag = -1
+
+    FlicClockJumped = jumpFlag
+End Function
+
+Sub FlicResyncAfterClockJump (flicId As Long, currentTime As Double)
+    Dim delaySec As Double
+    Dim previousTime As Double
+
+    If FlicValidId(flicId) = 0 Then Exit Sub
+
+    ' Re-anchor the current frame after a manual clock change or large TIMER discontinuity.
+    previousTime = FlicItems(flicId).LastRawTimer
+    delaySec = FlicTimeRemaining(FlicItems(flicId).NextTick, previousTime)
+    If delaySec <= 0 Then
+        delaySec = FlicGetFrameDelay(flicId, FlicItems(flicId).CurrentFrame) / 1000#
+        If delaySec <= 0 Then delaySec = .03
+    End If
+
+    FlicItems(flicId).LastTick = currentTime
+    FlicItems(flicId).NextTick = FlicTimeAdd(currentTime, delaySec)
+    FlicItems(flicId).LastRawTimer = currentTime
+End Sub
+
+Function FlicTimeAdd# (baseTime As Double, deltaSec As Double)
+    Dim resultTime As Double
+
+    ' Add seconds to a TIMER value and wrap across midnight.
+    ' QB64PE should not use the function name inside expressions here.
+    resultTime = baseTime + deltaSec
+    If resultTime >= 86400# Then resultTime = resultTime - 86400#
+
+    FlicTimeAdd = resultTime
+End Function
+
+Function FlicTimeRemaining# (targetTime As Double, currentTime As Double)
+    Dim resultTime As Double
+    Dim reachedFlag As Integer
+
+    ' Preserve the leftover part of the current frame when pause is pressed.
+    ' Use a local variable so the function name is only assigned at the end.
+    resultTime = 0
+    reachedFlag = FlicTimerReached(targetTime, currentTime)
+    If reachedFlag Then
+        FlicTimeRemaining = resultTime
         Exit Function
     End If
 
-    If targetTime - currentTime > 43200# Then
-        FlicTimerReached% = -1
+    resultTime = targetTime - currentTime
+    If resultTime < 0 Then resultTime = resultTime + 86400#
+
+    FlicTimeRemaining = resultTime
+End Function
+
+Function FlicTimerReached% (targetTime As Double, currentTime As Double)
+    Dim reachedFlag As Integer
+
+    ' Use a local variable so the function name is only assigned at the end.
+    reachedFlag = 0
+
+    If currentTime >= targetTime Then
+        reachedFlag = -1
+    ElseIf targetTime - currentTime > 43200# Then
+        reachedFlag = -1
     End If
+
+    FlicTimerReached = reachedFlag
 End Function
 
 Sub FlicMakeDefaultStopState (flicId As Long)
@@ -1812,5 +1937,7 @@ Sub FlicMakeDefaultStopState (flicId As Long)
     FlicItems(flicId).CurrentFrame = 0
     FlicItems(flicId).LastTick = 0
     FlicItems(flicId).NextTick = 0
+    FlicItems(flicId).RemainingDelay = 0
+    FlicItems(flicId).LastRawTimer = 0
     FlicResetDecodeState flicId
 End Sub

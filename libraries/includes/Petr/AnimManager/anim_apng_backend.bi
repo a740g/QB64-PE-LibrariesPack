@@ -35,6 +35,8 @@ Type ApngStore
     Paused As Integer
     LoopMode As Long
     NextTick As Double
+    RemainingDelay As Double
+    LastRawTimer As Double
     CompletedLoops As Long
     CanvasHandle As Long
     BackupHandle As Long
