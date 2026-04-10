@@ -1,3 +1,9 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
 ' demo_08_manual_seek_and_step.bas
 ' Manual playback / seek / cache test.
 ' Controls:
@@ -12,7 +18,7 @@
 '   P = play / resume
 '   Esc = end
 
-'$Include:'anim_manager.bi'
+
 
 Dim screenImage As Long
 Dim screenW As Long
@@ -210,4 +216,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

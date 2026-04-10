@@ -1,9 +1,15 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
 ' demo_07_slide_in_from_edges.bas
 ' Animations enter from screen edges and stop at fixed target boxes.
 ' Press R to restart the entry animation.
 ' Esc = end.
 
-'$Include:'anim_manager.bi'
+
 
 Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
 Declare Sub RestartScene (screenW As Long, screenH As Long, curX() As Single, curY() As Single, targetX() As Long, targetY() As Long, speedValue() As Single)
@@ -30,9 +36,9 @@ Dim allArrived As Integer
 screenW = 1360
 screenH = 760
 
-fileName(1) = "APPLE.FLI"
-fileName(2) = "Biker.png"
-fileName(3) = "drum.ani"
+fileName(1) = "DOLPHIN.FLI"
+fileName(2) = "elephant.png"
+fileName(3) = "phoenix1.ani"
 fileName(4) = "ANT_WALK.ANIM"
 
 drawW(1) = 260: drawH(1) = 190: targetX(1) = 110: targetY(1) = 120: speedValue(1) = 7.0
@@ -174,4 +180,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

@@ -1,9 +1,16 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
+
 ' demo_01_side_by_side_file_vs_program.bas
 ' Left: file animation from the library package.
 ' Right: generated procedural animation.
 ' Esc = end.
 
-'$Include:'anim_manager.bi'
+
 
 Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
 Declare Sub DrawProgramScene (boxX As Long, boxY As Long, boxW As Long, boxH As Long, phaseSec As Double)
@@ -187,4 +194,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

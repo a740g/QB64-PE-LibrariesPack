@@ -1,8 +1,14 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
 ' demo_02_animated_background_with_overlays.bas
 ' Fullscreen animated background plus three overlay animations.
 ' Esc = end.
 
-'$Include:'anim_manager.bi'
+
 
 Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
 Declare Sub DrawPanel (x As Long, y As Long, w As Long, h As Long, caption As String)
@@ -123,4 +129,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

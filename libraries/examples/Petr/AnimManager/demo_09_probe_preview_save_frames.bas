@@ -1,3 +1,9 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
 ' demo_09_probe_preview_save_frames.bas
 ' Probe metadata for several files, preview one selected item, and save its current frame.
 ' Controls:
@@ -6,7 +12,7 @@
 '   O = reopen selected item
 '   Esc = end
 
-'$Include:'anim_manager.bi'
+
 
 Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
 Declare Sub FormatNameText (formatId As Long, textValue As String)
@@ -208,4 +214,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

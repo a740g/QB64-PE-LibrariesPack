@@ -1,9 +1,15 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
 ' demo_03_fixed_positions_multi_size.bas
 ' Several animations at fixed positions, each with a different size.
 ' They do not overlap on purpose.
 ' Esc = end.
 
-'$Include:'anim_manager.bi'
+
 
 
 Dim screenImage As Long
@@ -125,4 +131,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

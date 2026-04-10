@@ -1,14 +1,18 @@
+'$INCLUDEONCE
+
+$IF VERSION < 4.3.0 THEN
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$END IF
+
 ' =========================================================
 ' Commented source copy for the unified animation manager.
 ' Explanatory comments were added in English without altering executable code.
 ' =========================================================
-'$Include:'anim_apng_backend.bi'
-'$Include:'anim_gif89a_backend.bi'
-'$Include:'anim_flic_backend_buffered_faster.bi'
-'$Include:'anim_amiga_anim_backend.bi'
-'$Include:'anim_ani_backend.bi'
-
-
+'$include: 'anim_amiga_anim_backend.bi'
+'$include: 'anim_ani_backend.bi'
+'$include: 'anim_apng_backend.bi'
+'$include: 'anim_flic_backend_buffered_faster.bi'
+'$include: 'anim_gif89a_backend.bi'
 
 ' =========================================================
 ' Unified animation dispatcher for QB64PE
@@ -146,22 +150,26 @@ Dim Shared AnimCacheBytesBudget As _Unsigned _Integer64
 ' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
 ' Return value: the function result follows the success/failure or data-return convention used by this module.
 ' Declaration only: the executable body is implemented later in the matching .bm module.
-DECLARE FUNCTION AnimSeek% (animId As Long, frameIndex As Long)
+  
+' FUNCTION AnimSeek% (animId As Long, frameIndex As Long)
 ' Purpose: Move playback to the frame that matches the requested time position.
 ' Parameters: animId = working value for animation id; timeMs = time value measured in milliseconds.
 ' Return value: the function result follows the success/failure or data-return convention used by this module.
 ' Declaration only: the executable body is implemented later in the matching .bm module.
-DECLARE FUNCTION AnimSeekTime% (animId As Long, timeMs As Double)
+
+' FUNCTION AnimSeekTime% (animId As Long, timeMs As Double)
 ' Purpose: Move one frame forward without relying on normal playback timing.
 ' Parameters: animId = working value for animation id.
 ' Return value: the function result follows the success/failure or data-return convention used by this module.
 ' Declaration only: the executable body is implemented later in the matching .bm module.
-DECLARE FUNCTION AnimStepForward% (animId As Long)
+ 
+' FUNCTION AnimStepForward% (animId As Long), AnimStepBackward% (animId As Long)
 ' Purpose: Move one frame backward without relying on normal playback timing.
 ' Parameters: animId = working value for animation id.
 ' Return value: the function result follows the success/failure or data-return convention used by this module.
 ' Declaration only: the executable body is implemented later in the matching .bm module.
-DECLARE FUNCTION AnimStepBackward% (animId As Long)
+
+
 
 
 

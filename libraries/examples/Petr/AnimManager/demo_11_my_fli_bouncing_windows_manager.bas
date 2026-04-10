@@ -1,5 +1,10 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
 
-'$Include:'anim_manager.bi'
+$UseLibrary:'Petr/AnimManager'
+
+
 
 
 'need WebP support? Look here: https://github.com/QB64Petr/AnimManager/tree/Anim_manager_library_source
@@ -164,4 +169,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

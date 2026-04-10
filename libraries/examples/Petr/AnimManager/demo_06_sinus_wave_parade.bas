@@ -1,8 +1,15 @@
+$If VERSION < 4.3.0 Then
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$End If
+
+$UseLibrary:'Petr/AnimManager'
+
+
 ' demo_06_sinus_wave_parade.bas
 ' Multiple animations travel horizontally while following sine-wave vertical motion.
 ' Esc = end.
 
-'$Include:'anim_manager.bi'
+
 
 Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
 Declare Sub DrawWaveBackground (screenW As Long, screenH As Long, phaseSec As Double)
@@ -28,11 +35,11 @@ Dim yNow As Long
 screenW = 1360
 screenH = 760
 
-fileName(1) = "APPLE.FLI"
-fileName(2) = "Biker.png"
-fileName(3) = "Animals.gif"
+fileName(1) = "Belinda.fli"
+fileName(2) = "test.FLC"
+fileName(3) = "valkyrie.anim"
 fileName(4) = "drum.ani"
-fileName(5) = "Windmill.png"
+fileName(5) = "G-avatar.gif"
 
 posX(1) = 0: baseY(1) = 110: speedValue(1) = 2.1: amplitudeValue(1) = 26: phaseOffset(1) = 0.0: drawW(1) = 220: drawH(1) = 160
 posX(2) = 260: baseY(2) = 220: speedValue(2) = 1.7: amplitudeValue(2) = 34: phaseOffset(2) = 0.8: drawW(2) = 150: drawH(2) = 150
@@ -147,4 +154,4 @@ Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
 End Sub
 
-'$Include:'anim_manager.bm'
+

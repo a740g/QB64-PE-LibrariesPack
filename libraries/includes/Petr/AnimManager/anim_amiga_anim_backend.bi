@@ -1,3 +1,10 @@
+$INCLUDEONCE
+
+$IF VERSION < 4.3.0 THEN
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$END IF
+
+
 ' =========================================================
 ' Commented source copy for the Amiga ANIM backend.
 ' Explanatory comments were added in English without altering executable code.
