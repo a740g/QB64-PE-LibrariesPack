@@ -1758,7 +1758,7 @@ Function AnimBoxHeight& (y1 As Long, y2 As Long)
     AnimBoxHeight = y2 - y1 + 1
 End Function
 
-'$include: 'anim_amiga_anim_backend.bm'
+'$include: 'anim_amiga_anim_backend2.bm'
 '$include: 'anim_ani_backend.bm'
 '$include: 'anim_apng_backend.bm'
 '$include: 'anim_flic_backend_buffered_faster.bm'

@@ -118,9 +118,7 @@ Function ApngOpen& (fileName As String)
     Dim frameStart As Long
     ' Variable: frameCounter stores the total number of frames available for the current animation.
     Dim frameCounter As Long
-    ' Variable: previousBackup stores the working value for previous backup.
-    Dim previousBackup As Long
-
+    
     ApngOpen = -1
     ApngInitStorageIfNeeded
     If _FileExists(fileName) = 0 Then Exit Function
@@ -418,8 +416,6 @@ End Sub
 ' Purpose: Release all resources owned by one APNG decoder instance.
 ' Parameters: apngId = working value for APNG id.
 Sub ApngClose (apngId As Long)
-    ' Variable: frameIndex stores the index variable used to address the current item.
-    Dim frameIndex As Long
     ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
     Dim frameSlot As Long
     ' Variable: firstFrame stores the working value for first frame.
@@ -880,8 +876,6 @@ End Function
 Function ApngSaveFrame% (apngId As Long, frameIndex As Long, fileName As String)
     ' Variable: saveCanvas stores the working value for save canvas.
     Dim saveCanvas As Long
-    ' Variable: saveBackup stores the working value for save backup.
-    Dim saveBackup As Long
     ' Variable: oldCanvas stores the working value for old canvas.
     Dim oldCanvas As Long
     ' Variable: oldBackup stores the working value for old backup.

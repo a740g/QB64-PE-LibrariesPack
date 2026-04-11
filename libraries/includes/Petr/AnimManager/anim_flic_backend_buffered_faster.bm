@@ -678,7 +678,7 @@ Function FlicSaveFrame% (flicId As Long, frameIndex As Long, fileName As String)
     If FlicEnsureRenderedFrame(flicId, frameIndex) = 0 Then Exit Function
 
     _SaveImage fileName, FlicItems(flicId).CanvasImage
-
+    dim N as long
     FlicItems(flicId).CurrentFrame = savedFrame
     N = FlicEnsureRenderedFrame (flicId, savedFrame)
 
@@ -705,7 +705,7 @@ Function FlicCloneFrameImage& (flicId As Long, frameIndex As Long)
     If FlicItems(flicId).CanvasImage > -2 Then Exit Function
 
     outHandle = _CopyImage(FlicItems(flicId).CanvasImage, 32)
-
+    dim N as long
     If savedFrame <> frameIndex Then
         FlicItems(flicId).CurrentFrame = savedFrame
         N = FlicEnsureRenderedFrame (flicId, savedFrame)
@@ -1525,7 +1525,7 @@ Function FlicApplyFrameAtOffset% (flicId As Long, frameOffset As _Integer64)
     FlicFrameViewPos = 0
     FlicFrameViewLimit = framePayloadSize
 
-    FlicDecodeFrameChunks frameOffset, frameSize, chunkCount
+    FlicDecodeFrameChunks frameSize, chunkCount
     FlicApplyFrameAtOffset% = -1
 End Function
 
@@ -2135,7 +2135,7 @@ End Sub
 
 ' Purpose: Decode or apply FLI/FLC chunk data to the current frame buffer.
 ' Parameters: frameOffset = working value for frame offset; frameSize = working value for frame size; chunkCount = count used to size or iterate the current data set.
-Sub FlicDecodeFrameChunks (frameOffset As _Integer64, frameSize As _Integer64, chunkCount As Long)
+Sub FlicDecodeFrameChunks (frameSize As _Integer64, chunkCount As Long)
     ' Variable: slotId stores the working value for slot id.
     Dim slotId As Long
     ' Variable: indexValue stores the working value for index value.
@@ -2183,10 +2183,10 @@ Sub FlicDecodeFrameChunks (frameOffset As _Integer64, frameSize As _Integer64, c
                 FlicDecodeChunkCopy chunkSize
 
             Case CHUNK_COLOR_256
-                FlicDecodeChunkColor256 chunkSize
+                FlicDecodeChunkColor256 
 
             Case CHUNK_COLOR_64
-                FlicDecodeChunkColor64 chunkSize
+                FlicDecodeChunkColor64 
 
             Case CHUNK_BYTE_RUN
                 FlicDecodeChunkByteRun
@@ -2265,7 +2265,7 @@ End Sub
 
 ' Purpose: Decode or apply FLI/FLC chunk data to the current frame buffer.
 ' Parameters: chunkSize = size of the current chunk payload.
-Sub FlicDecodeChunkColor256 (chunkSize As _Integer64)
+Sub FlicDecodeChunkColor256 
     ' Variable: slotId stores the working value for slot id.
     Dim slotId As Long
     ' Variable: packetCount stores the count used to size or iterate the current data set.
@@ -2330,7 +2330,7 @@ End Sub
 
 ' Purpose: Decode or apply FLI/FLC chunk data to the current frame buffer.
 ' Parameters: chunkSize = size of the current chunk payload.
-Sub FlicDecodeChunkColor64 (chunkSize As _Integer64)
+Sub FlicDecodeChunkColor64
     ' Variable: slotId stores the working value for slot id.
     Dim slotId As Long
     ' Variable: packetCount stores the count used to size or iterate the current data set.

@@ -1,8 +1,8 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 ' demo_09_probe_preview_save_frames.bas
 ' Probe metadata for several files, preview one selected item, and save its current frame.
@@ -12,30 +12,52 @@ $UseLibrary:'Petr/AnimManager'
 '   O = reopen selected item
 '   Esc = end
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
 
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
-Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-Declare Sub FormatNameText (formatId As Long, textValue As String)
-Declare Sub OpenSelectedPreview (selectedIndex As Long, previewId As Long, fileName() As String)
-Declare Sub ProbeAllFiles (fileName() As String, okFlag() As Integer, formatId() As Long, widthPx() As Long, heightPx() As Long, frameCount() As Long)
-
-Dim screenImage As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim fileName(1 To 8) As String
-Dim okFlag(1 To 8) As Integer
-Dim formatId(1 To 8) As Long
-Dim widthPx(1 To 8) As Long
-Dim heightPx(1 To 8) As Long
-Dim frameCount(1 To 8) As Long
-Dim previewId As Long
-Dim selectedIndex As Long
-Dim keyCode As Long
-Dim quitFlag As Integer
-Dim i As Long
-Dim formatText As String
-Dim saveName As String
-Dim infoText As String
+DIM screenImage AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM fileName(1 TO 8) AS STRING
+DIM okFlag(1 TO 8) AS INTEGER
+DIM formatId(1 TO 8) AS LONG
+DIM widthPx(1 TO 8) AS LONG
+DIM heightPx(1 TO 8) AS LONG
+DIM frameCount(1 TO 8) AS LONG
+DIM previewId AS LONG
+DIM selectedIndex AS LONG
+DIM keyCode AS LONG
+DIM quitFlag AS INTEGER
+DIM i AS LONG
+DIM formatText AS STRING
+DIM saveName AS STRING
+DIM infoText AS STRING
 
 screenW = 1360
 screenH = 780
@@ -51,167 +73,168 @@ fileName(8) = "3Globes.anim"
 
 ProbeAllFiles fileName(), okFlag(), formatId(), widthPx(), heightPx(), frameCount()
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 09 - probe, preview, save frame"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 09 - probe, preview, save frame"
 
 selectedIndex = 1
 previewId = -1
 OpenSelectedPreview selectedIndex, previewId, fileName()
 
-Do
-    keyCode = _KeyHit
-    Select Case keyCode
-        Case 27
+DO
+    keyCode = _KEYHIT
+    SELECT CASE keyCode
+        CASE 27
             quitFlag = -1
 
-        Case 18432
-            If selectedIndex > 1 Then
+        CASE 18432
+            IF selectedIndex > 1 THEN
                 selectedIndex = selectedIndex - 1
                 OpenSelectedPreview selectedIndex, previewId, fileName()
-            End If
+            END IF
 
-        Case 20480
-            If selectedIndex < 8 Then
+        CASE 20480
+            IF selectedIndex < 8 THEN
                 selectedIndex = selectedIndex + 1
                 OpenSelectedPreview selectedIndex, previewId, fileName()
-            End If
+            END IF
 
-        Case 79, 111
+        CASE 79, 111
             OpenSelectedPreview selectedIndex, previewId, fileName()
 
-        Case 83, 115
-            If previewId >= 0 Then
+        CASE 83, 115
+            IF previewId >= 0 THEN
                 saveName = "saved_preview_frame.png"
                 N = AnimSaveFrameTo(previewId, AnimGetPos(previewId), saveName)
-            End If
-    End Select
+            END IF
+    END SELECT
 
-    If previewId >= 0 Then AnimUpdate previewId
+    IF previewId >= 0 THEN AnimUpdate previewId
 
-    Cls , _RGB32(12, 14, 22)
-    _PrintString (20, 18), "Demo 09: probe + preview + save current frame"
-    _PrintString (20, 40), "Up/Down = select    O = reopen    S = save frame to saved_preview_frame.png    Esc = end"
+    CLS , _RGB32(12, 14, 22)
+    _PRINTSTRING (20, 18), "Demo 09: probe + preview + save current frame"
+    _PRINTSTRING (20, 40), "Up/Down = select    O = reopen    S = save frame to saved_preview_frame.png    Esc = end"
 
-    Line (20, 80)-(640, 740), _RGB32(18, 22, 30), BF
-    Line (20, 80)-(640, 740), _RGB32(140, 180, 230), B
+    LINE (20, 80)-(640, 740), _RGB32(18, 22, 30), BF
+    LINE (20, 80)-(640, 740), _RGB32(140, 180, 230), B
 
-    _PrintString (38, 94), "Probe results"
-    For i = 1 To 8
+    _PRINTSTRING (38, 94), "Probe results"
+    FOR i = 1 TO 8
         FormatNameText formatId(i), formatText
-        If i = selectedIndex Then
-            Line (28, 118 + (i - 1) * 72)-(632, 176 + (i - 1) * 72), _RGB32(44, 58, 84), BF
-            Line (28, 118 + (i - 1) * 72)-(632, 176 + (i - 1) * 72), _RGB32(255, 255, 255), B
-        End If
+        IF i = selectedIndex THEN
+            LINE (28, 118 + (i - 1) * 72)-(632, 176 + (i - 1) * 72), _RGB32(44, 58, 84), BF
+            LINE (28, 118 + (i - 1) * 72)-(632, 176 + (i - 1) * 72), _RGB32(255, 255, 255), B
+        END IF
 
-        _PrintString (40, 124 + (i - 1) * 72), fileName(i)
-        _PrintString (40, 146 + (i - 1) * 72), "ok=" + LTrim$(Str$(okFlag(i))) + "  fmt=" + formatText
-        _PrintString (40, 168 + (i - 1) * 72), "size " + LTrim$(Str$(widthPx(i))) + "x" + LTrim$(Str$(heightPx(i))) + "   frames " + LTrim$(Str$(frameCount(i)))
-    Next i
+        _PRINTSTRING (40, 124 + (i - 1) * 72), fileName(i)
+        _PRINTSTRING (40, 146 + (i - 1) * 72), "ok=" + LTRIM$(STR$(okFlag(i))) + "  fmt=" + formatText
+        _PRINTSTRING (40, 168 + (i - 1) * 72), "size " + LTRIM$(STR$(widthPx(i))) + "x" + LTRIM$(STR$(heightPx(i))) + "   frames " + LTRIM$(STR$(frameCount(i)))
+    NEXT i
 
-    Line (700, 80)-(1320, 560), _RGB32(18, 22, 30), BF
-    Line (700, 80)-(1320, 560), _RGB32(140, 180, 230), B
-    _PrintString (718, 94), "Preview"
+    LINE (700, 80)-(1320, 560), _RGB32(18, 22, 30), BF
+    LINE (700, 80)-(1320, 560), _RGB32(140, 180, 230), B
+    _PRINTSTRING (718, 94), "Preview"
 
-    If previewId >= 0 Then
+    IF previewId >= 0 THEN
         DrawAnimFit previewId, 712, 110, 596, 430
         FormatNameText AnimFormat(previewId), formatText
-        infoText = "current frame " + LTrim$(Str$(AnimGetPos(previewId))) + " / " + LTrim$(Str$(AnimLen(previewId)))
-        _PrintString (718, 580), "Selected: " + fileName(selectedIndex)
-        _PrintString (718, 604), "Format: " + formatText
-        _PrintString (718, 628), infoText
-        _PrintString (718, 652), "Error: " + AnimError(previewId)
-    Else
-        _PrintString (718, 580), "Open failed for selected item."
-    End If
+        infoText = "current frame " + LTRIM$(STR$(AnimGetPos(previewId))) + " / " + LTRIM$(STR$(AnimLen(previewId)))
+        _PRINTSTRING (718, 580), "Selected: " + fileName(selectedIndex)
+        _PRINTSTRING (718, 604), "Format: " + formatText
+        _PRINTSTRING (718, 628), infoText
+        _PRINTSTRING (718, 652), "Error: " + AnimError(previewId)
+    ELSE
+        _PRINTSTRING (718, 580), "Open failed for selected item."
+    END IF
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
-If previewId >= 0 Then AnimFree previewId
+IF previewId >= 0 THEN AnimFree previewId
 AnimFreeAll
-If screenImage <= -2 Then Screen 0: _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN SCREEN 0: _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub OpenSelectedPreview (selectedIndex As Long, previewId As Long, fileName() As String)
-    If previewId >= 0 Then
+SUB OpenSelectedPreview (selectedIndex AS LONG, previewId AS LONG, fileName() AS STRING)
+    IF previewId >= 0 THEN
         AnimFree previewId
         previewId = -1
-    End If
+    END IF
 
     previewId = AnimOpen(fileName(selectedIndex))
-    If previewId >= 0 Then
+    IF previewId >= 0 THEN
         AnimSetLoop previewId, ANIM_LOOP_FOREVER
         AnimStart previewId
-    End If
-End Sub
+    END IF
+END SUB
 
-Sub ProbeAllFiles (fileName() As String, okFlag() As Integer, formatId() As Long, widthPx() As Long, heightPx() As Long, frameCount() As Long)
-    Dim i As Long
+SUB ProbeAllFiles (fileName() AS STRING, okFlag() AS INTEGER, formatId() AS LONG, widthPx() AS LONG, heightPx() AS LONG, frameCount() AS LONG)
+    DIM i AS LONG
 
-    For i = LBound(fileName) To UBound(fileName)
+    FOR i = LBOUND(fileName) TO UBOUND(fileName)
         AnimProbe fileName(i), okFlag(i), formatId(i), widthPx(i), heightPx(i), frameCount(i)
-    Next i
-End Sub
+    NEXT i
+END SUB
 
-Sub FormatNameText (formatId As Long, textValue As String)
+SUB FormatNameText (formatId AS LONG, textValue AS STRING)
     textValue = "UNKNOWN"
 
-    Select Case formatId
-        Case ANIM_FMT_APNG
+    SELECT CASE formatId
+        CASE ANIM_FMT_APNG
             textValue = "APNG"
-        Case ANIM_FMT_GIF89A
+        CASE ANIM_FMT_GIF89A
             textValue = "GIF89a"
-        Case ANIM_FMT_FLI
+        CASE ANIM_FMT_FLI
             textValue = "FLI"
-        Case ANIM_FMT_FLC
+        CASE ANIM_FMT_FLC
             textValue = "FLC"
-        Case ANIM_FMT_AMIGA_ANIM
+        CASE ANIM_FMT_AMIGA_ANIM
             textValue = "AMIGA ANIM"
-        Case ANIM_FMT_ANI
+        CASE ANIM_FMT_ANI
             textValue = "ANI"
-    End Select
-End Sub
+    END SELECT
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 

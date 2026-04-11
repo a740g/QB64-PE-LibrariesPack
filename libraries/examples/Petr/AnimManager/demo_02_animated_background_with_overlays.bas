@@ -1,132 +1,157 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 ' demo_02_animated_background_with_overlays.bas
 ' Fullscreen animated background plus three overlay animations.
 ' Esc = end.
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
 
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
-Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-Declare Sub DrawPanel (x As Long, y As Long, w As Long, h As Long, caption As String)
-
-Dim screenImage As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim bgAnim As Long
-Dim animA As Long
-Dim animB As Long
-Dim animC As Long
-Dim quitFlag As Integer
-Dim keyCode As Long
+DIM screenImage AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM bgAnim AS LONG
+DIM animA AS LONG
+DIM animB AS LONG
+DIM animC AS LONG
+DIM quitFlag AS INTEGER
+DIM keyCode AS LONG
 
 screenW = 1280
 screenH = 720
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 02 - animated background with overlays"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 02 - animated background with overlays"
 
 bgAnim = AnimOpen("elephant.png")
 animA = AnimOpen("drum.ani")
 animB = AnimOpen("APPLE.FLI")
 animC = AnimOpen("Animals.gif")
 
-If bgAnim >= 0 Then AnimSetLoop bgAnim, ANIM_LOOP_FOREVER: AnimStart bgAnim
-If animA >= 0 Then AnimSetLoop animA, ANIM_LOOP_FOREVER: AnimStart animA
-If animB >= 0 Then AnimSetLoop animB, ANIM_LOOP_FOREVER: AnimStart animB
-If animC >= 0 Then AnimSetLoop animC, ANIM_LOOP_FOREVER: AnimStart animC
+IF bgAnim >= 0 THEN AnimSetLoop bgAnim, ANIM_LOOP_FOREVER: AnimStart bgAnim
+IF animA >= 0 THEN AnimSetLoop animA, ANIM_LOOP_FOREVER: AnimStart animA
+IF animB >= 0 THEN AnimSetLoop animB, ANIM_LOOP_FOREVER: AnimStart animB
+IF animC >= 0 THEN AnimSetLoop animC, ANIM_LOOP_FOREVER: AnimStart animC
 
-Do
-    keyCode = _KeyHit
-    If keyCode = 27 Then quitFlag = -1
+DO
+    keyCode = _KEYHIT
+    IF keyCode = 27 THEN quitFlag = -1
 
-    If bgAnim >= 0 Then AnimUpdate bgAnim
-    If animA >= 0 Then AnimUpdate animA
-    If animB >= 0 Then AnimUpdate animB
-    If animC >= 0 Then AnimUpdate animC
+    IF bgAnim >= 0 THEN AnimUpdate bgAnim
+    IF animA >= 0 THEN AnimUpdate animA
+    IF animB >= 0 THEN AnimUpdate animB
+    IF animC >= 0 THEN AnimUpdate animC
 
-    Cls , _RGB32(0, 0, 0)
+    CLS , _RGB32(0, 0, 0)
 
-    If bgAnim >= 0 Then
+    IF bgAnim >= 0 THEN
         DrawAnimFit bgAnim, 0, 0, screenW, screenH
-    End If
+    END IF
 
-    Line (0, 0)-(screenW - 1, 64), _RGBA32(0, 0, 0, 180), BF
-    _PrintString (24, 18), "Demo 02: animated background + overlays"
-    _PrintString (24, 40), "Background: elephant.png    Overlays: drum.ani, APPLE.FLI, Animals.gif"
+    LINE (0, 0)-(screenW - 1, 64), _RGBA32(0, 0, 0, 180), BF
+    _PRINTSTRING (24, 18), "Demo 02: animated background + overlays"
+    _PRINTSTRING (24, 40), "Background: elephant.png    Overlays: drum.ani, APPLE.FLI, Animals.gif"
 
     DrawPanel 24, 92, 240, 240, "drum.ani"
     DrawPanel 340, 120, 600, 420, "APPLE.FLI"
     DrawPanel 980, 90, 260, 260, "Animals.gif"
 
-    If animA >= 0 Then DrawAnimFit animA, 36, 104, 216, 216
-    If animB >= 0 Then DrawAnimFit animB, 352, 132, 576, 396
-    If animC >= 0 Then DrawAnimFit animC, 992, 102, 236, 236
+    IF animA >= 0 THEN DrawAnimFit animA, 36, 104, 216, 216
+    IF animB >= 0 THEN DrawAnimFit animB, 352, 132, 576, 396
+    IF animC >= 0 THEN DrawAnimFit animC, 992, 102, 236, 236
 
-    Line (36, 580)-(1244, 684), _RGBA32(0, 0, 0, 150), BF
-    Line (36, 580)-(1244, 684), _RGB32(220, 220, 255), B
-    _PrintString (54, 600), "This test checks layered drawing order and transparency behavior."
-    _PrintString (54, 624), "The background is animated full-screen. The foreground objects must stay visible and stable."
-    _PrintString (54, 648), "Esc = end"
+    LINE (36, 580)-(1244, 684), _RGBA32(0, 0, 0, 150), BF
+    LINE (36, 580)-(1244, 684), _RGB32(220, 220, 255), B
+    _PRINTSTRING (54, 600), "This test checks layered drawing order and transparency behavior."
+    _PRINTSTRING (54, 624), "The background is animated full-screen. The foreground objects must stay visible and stable."
+    _PRINTSTRING (54, 648), "Esc = end"
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
 AnimFreeAll
-If screenImage <= -2 Then Screen 0: _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN SCREEN 0: _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub DrawPanel (x As Long, y As Long, w As Long, h As Long, caption As String)
-    Line (x - 2, y - 24)-(x + w + 1, y + h + 1), _RGBA32(0, 0, 0, 130), BF
-    Line (x - 2, y - 24)-(x + w + 1, y + h + 1), _RGB32(230, 230, 250), B
-    Line (x, y)-(x + w - 1, y + h - 1), _RGBA32(10, 10, 20, 90), BF
-    Line (x, y)-(x + w - 1, y + h - 1), _RGB32(130, 170, 220), B
-    _PrintString (x + 8, y - 16), caption
-End Sub
+SUB DrawPanel (x AS LONG, y AS LONG, w AS LONG, h AS LONG, caption AS STRING)
+    LINE (x - 2, y - 24)-(x + w + 1, y + h + 1), _RGBA32(0, 0, 0, 130), BF
+    LINE (x - 2, y - 24)-(x + w + 1, y + h + 1), _RGB32(230, 230, 250), B
+    LINE (x, y)-(x + w - 1, y + h - 1), _RGBA32(10, 10, 20, 90), BF
+    LINE (x, y)-(x + w - 1, y + h - 1), _RGB32(130, 170, 220), B
+    _PRINTSTRING (x + 8, y - 16), caption
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 

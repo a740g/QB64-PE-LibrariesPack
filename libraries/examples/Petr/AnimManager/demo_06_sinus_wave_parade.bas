@@ -1,36 +1,61 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 
 ' demo_06_sinus_wave_parade.bas
 ' Multiple animations travel horizontally while following sine-wave vertical motion.
 ' Esc = end.
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
+
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
 
-Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-Declare Sub DrawWaveBackground (screenW As Long, screenH As Long, phaseSec As Double)
-
-Dim screenImage As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim fileName(1 To 5) As String
-Dim animId(1 To 5) As Long
-Dim posX(1 To 5) As Single
-Dim baseY(1 To 5) As Single
-Dim speedValue(1 To 5) As Single
-Dim amplitudeValue(1 To 5) As Single
-Dim phaseOffset(1 To 5) As Single
-Dim drawW(1 To 5) As Long
-Dim drawH(1 To 5) As Long
-Dim i As Long
-Dim keyCode As Long
-Dim quitFlag As Integer
-Dim phaseSec As Double
-Dim yNow As Long
+DIM screenImage AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM fileName(1 TO 5) AS STRING
+DIM animId(1 TO 5) AS LONG
+DIM posX(1 TO 5) AS SINGLE
+DIM baseY(1 TO 5) AS SINGLE
+DIM speedValue(1 TO 5) AS SINGLE
+DIM amplitudeValue(1 TO 5) AS SINGLE
+DIM phaseOffset(1 TO 5) AS SINGLE
+DIM drawW(1 TO 5) AS LONG
+DIM drawH(1 TO 5) AS LONG
+DIM i AS LONG
+DIM keyCode AS LONG
+DIM quitFlag AS INTEGER
+DIM phaseSec AS DOUBLE
+DIM yNow AS LONG
 
 screenW = 1360
 screenH = 760
@@ -47,111 +72,112 @@ posX(3) = 560: baseY(3) = 340: speedValue(3) = 1.4: amplitudeValue(3) = 42: phas
 posX(4) = 860: baseY(4) = 500: speedValue(4) = 2.6: amplitudeValue(4) = 30: phaseOffset(4) = 2.1: drawW(4) = 170: drawH(4) = 170
 posX(5) = 1100: baseY(5) = 610: speedValue(5) = 1.2: amplitudeValue(5) = 24: phaseOffset(5) = 2.7: drawW(5) = 220: drawH(5) = 200
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 06 - sinus wave parade"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 06 - sinus wave parade"
 
-For i = 1 To 5
+FOR i = 1 TO 5
     animId(i) = AnimOpen(fileName(i))
-    If animId(i) >= 0 Then
+    IF animId(i) >= 0 THEN
         AnimSetLoop animId(i), ANIM_LOOP_FOREVER
         AnimStart animId(i)
-    End If
-Next i
+    END IF
+NEXT i
 
-Do
-    keyCode = _KeyHit
-    If keyCode = 27 Then quitFlag = -1
+DO
+    keyCode = _KEYHIT
+    IF keyCode = 27 THEN quitFlag = -1
 
-    For i = 1 To 5
-        If animId(i) >= 0 Then AnimUpdate animId(i)
-    Next i
+    FOR i = 1 TO 5
+        IF animId(i) >= 0 THEN AnimUpdate animId(i)
+    NEXT i
 
-    phaseSec = Timer
+    phaseSec = TIMER
     DrawWaveBackground screenW, screenH, phaseSec
-    _PrintString (20, 18), "Demo 06: sinus-wave movement"
-    _PrintString (20, 40), "Several formats follow different amplitudes and speeds. Esc = end"
+    _PRINTSTRING (20, 18), "Demo 06: sinus-wave movement"
+    _PRINTSTRING (20, 40), "Several formats follow different amplitudes and speeds. Esc = end"
 
-    For i = 1 To 5
+    FOR i = 1 TO 5
         posX(i) = posX(i) + speedValue(i)
-        If posX(i) > screenW + 20 Then posX(i) = -drawW(i) - 20
+        IF posX(i) > screenW + 20 THEN posX(i) = -drawW(i) - 20
 
-        yNow = CLng(baseY(i) + Sin(phaseSec * 2.2 + phaseOffset(i) + (posX(i) / 180#)) * amplitudeValue(i))
+        yNow = CLNG(baseY(i) + SIN(phaseSec * 2.2 + phaseOffset(i) + (posX(i) / 180#)) * amplitudeValue(i))
 
-        Line (Int(posX(i)) - 2, yNow - 20)-(Int(posX(i)) + drawW(i) + 1, yNow + drawH(i) + 1), _RGBA32(0, 0, 0, 120), BF
-        Line (Int(posX(i)) - 2, yNow - 20)-(Int(posX(i)) + drawW(i) + 1, yNow + drawH(i) + 1), _RGB32(235, 235, 255), B
-        _PrintString (Int(posX(i)) + 8, yNow - 14), fileName(i)
-        If animId(i) >= 0 Then DrawAnimFit animId(i), Int(posX(i)), yNow, drawW(i), drawH(i)
-    Next i
+        LINE (INT(posX(i)) - 2, yNow - 20)-(INT(posX(i)) + drawW(i) + 1, yNow + drawH(i) + 1), _RGBA32(0, 0, 0, 120), BF
+        LINE (INT(posX(i)) - 2, yNow - 20)-(INT(posX(i)) + drawW(i) + 1, yNow + drawH(i) + 1), _RGB32(235, 235, 255), B
+        _PRINTSTRING (INT(posX(i)) + 8, yNow - 14), fileName(i)
+        IF animId(i) >= 0 THEN DrawAnimFit animId(i), INT(posX(i)), yNow, drawW(i), drawH(i)
+    NEXT i
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
 AnimFreeAll
-If screenImage <= -2 Then Screen 0: _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN SCREEN 0: _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub DrawWaveBackground (screenW As Long, screenH As Long, phaseSec As Double)
-    Dim i As Long
-    Dim yLine As Long
-    Dim waveY As Long
+SUB DrawWaveBackground (screenW AS LONG, screenH AS LONG, phaseSec AS DOUBLE)
+    DIM i AS LONG
+    DIM yLine AS LONG
+    DIM waveY AS LONG
 
-    Cls , _RGB32(12, 16, 28)
+    CLS , _RGB32(12, 16, 28)
 
-    For i = 0 To screenH - 1 Step 28
+    FOR i = 0 TO screenH - 1 STEP 28
         yLine = i
-        Line (0, yLine)-(screenW - 1, yLine), _RGB32(18, 26, 44)
-    Next i
+        LINE (0, yLine)-(screenW - 1, yLine), _RGB32(18, 26, 44)
+    NEXT i
 
-    For i = 0 To screenW - 1 Step 8
-        waveY = 90 + CLng(Sin((i / 70#) + phaseSec * 2) * 18)
-        Line (i, waveY)-(i, waveY + 2), _RGB32(110, 140, 230)
-        waveY = 260 + CLng(Sin((i / 90#) + phaseSec * 1.5 + 0.8) * 24)
-        Line (i, waveY)-(i, waveY + 2), _RGB32(160, 190, 255)
-        waveY = 450 + CLng(Sin((i / 120#) + phaseSec * 1.2 + 1.5) * 28)
-        Line (i, waveY)-(i, waveY + 2), _RGB32(110, 150, 200)
-    Next i
-End Sub
+    FOR i = 0 TO screenW - 1 STEP 8
+        waveY = 90 + CLNG(SIN((i / 70#) + phaseSec * 2) * 18)
+        LINE (i, waveY)-(i, waveY + 2), _RGB32(110, 140, 230)
+        waveY = 260 + CLNG(SIN((i / 90#) + phaseSec * 1.5 + 0.8) * 24)
+        LINE (i, waveY)-(i, waveY + 2), _RGB32(160, 190, 255)
+        waveY = 450 + CLNG(SIN((i / 120#) + phaseSec * 1.2 + 1.5) * 28)
+        LINE (i, waveY)-(i, waveY + 2), _RGB32(110, 150, 200)
+    NEXT i
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 

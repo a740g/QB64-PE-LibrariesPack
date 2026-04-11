@@ -1,29 +1,58 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 ' demo_10_stress_gallery_mixed_formats.bas
 ' Stress test: many items open at once, mixed formats, mixed cache modes.
 ' Esc = end.
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
+
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
 
-Dim screenImage As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim fileName(1 To 9) As String
-Dim animId(1 To 9) As Long
-Dim boxX(1 To 9) As Long
-Dim boxY(1 To 9) As Long
-Dim boxW(1 To 9) As Long
-Dim boxH(1 To 9) As Long
-Dim cacheMode(1 To 9) As Long
-Dim cacheText As String
-Dim i As Long
-Dim keyCode As Long
-Dim quitFlag As Integer
+
+DIM screenImage AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM fileName(1 TO 9) AS STRING
+DIM animId(1 TO 9) AS LONG
+DIM boxX(1 TO 9) AS LONG
+DIM boxY(1 TO 9) AS LONG
+DIM boxW(1 TO 9) AS LONG
+DIM boxH(1 TO 9) AS LONG
+DIM cacheMode(1 TO 9) AS LONG
+DIM cacheText AS STRING
+DIM i AS LONG
+DIM keyCode AS LONG
+DIM quitFlag AS INTEGER
 
 screenW = 1440
 screenH = 860
@@ -58,110 +87,111 @@ cacheMode(7) = ANIM_CACHE_STREAM
 cacheMode(8) = ANIM_CACHE_PRELOAD_ALL
 cacheMode(9) = ANIM_CACHE_AUTO
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 10 - stress gallery mixed formats"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 10 - stress gallery mixed formats"
 
 AnimSetCacheBudgetMB 512
-Print "Caching ANIM animations..."
-For i = 1 To 9
+PRINT "Caching ANIM animations..."
+FOR i = 1 TO 9
     animId(i) = AnimOpen(fileName(i))
-    If animId(i) >= 0 Then
+    IF animId(i) >= 0 THEN
         AnimSetLoop animId(i), ANIM_LOOP_FOREVER
         AnimSetCacheMode animId(i), cacheMode(i)
         AnimStart animId(i)
-    End If
-Next i
+    END IF
+NEXT i
 
-Do
-    keyCode = _KeyHit
-    If keyCode = 27 Then quitFlag = -1
+DO
+    keyCode = _KEYHIT
+    IF keyCode = 27 THEN quitFlag = -1
 
-    For i = 1 To 9
-        If animId(i) >= 0 Then AnimUpdate animId(i)
-    Next i
+    FOR i = 1 TO 9
+        IF animId(i) >= 0 THEN AnimUpdate animId(i)
+    NEXT i
 
-    Cls , _RGB32(10, 12, 18)
-    _PrintString (20, 18), "Demo 10: stress gallery with mixed formats and cache modes"
-    _PrintString (20, 40), "Global cache budget: " + LTrim$(Str$(AnimGetCacheBudgetMB)) + " MB    Esc = end"
+    CLS , _RGB32(10, 12, 18)
+    _PRINTSTRING (20, 18), "Demo 10: stress gallery with mixed formats and cache modes"
+    _PRINTSTRING (20, 40), "Global cache budget: " + LTRIM$(STR$(AnimGetCacheBudgetMB)) + " MB    Esc = end"
 
-    For i = 1 To 9
-        Line (boxX(i) - 2, boxY(i) - 24)-(boxX(i) + boxW(i) + 1, boxY(i) + boxH(i) + 1), _RGB32(65, 82, 120), BF
-        Line (boxX(i) - 2, boxY(i) - 24)-(boxX(i) + boxW(i) + 1, boxY(i) + boxH(i) + 1), _RGB32(250, 250, 255), B
-        Line (boxX(i), boxY(i))-(boxX(i) + boxW(i) - 1, boxY(i) + boxH(i) - 1), _RGB32(16, 18, 28), BF
-        Line (boxX(i), boxY(i))-(boxX(i) + boxW(i) - 1, boxY(i) + boxH(i) - 1), _RGB32(130, 170, 220), B
+    FOR i = 1 TO 9
+        LINE (boxX(i) - 2, boxY(i) - 24)-(boxX(i) + boxW(i) + 1, boxY(i) + boxH(i) + 1), _RGB32(65, 82, 120), BF
+        LINE (boxX(i) - 2, boxY(i) - 24)-(boxX(i) + boxW(i) + 1, boxY(i) + boxH(i) + 1), _RGB32(250, 250, 255), B
+        LINE (boxX(i), boxY(i))-(boxX(i) + boxW(i) - 1, boxY(i) + boxH(i) - 1), _RGB32(16, 18, 28), BF
+        LINE (boxX(i), boxY(i))-(boxX(i) + boxW(i) - 1, boxY(i) + boxH(i) - 1), _RGB32(130, 170, 220), B
 
-        _PrintString (boxX(i) + 8, boxY(i) - 16), fileName(i)
-        If animId(i) >= 0 Then
+        _PRINTSTRING (boxX(i) + 8, boxY(i) - 16), fileName(i)
+        IF animId(i) >= 0 THEN
             DrawAnimFit animId(i), boxX(i) + 8, boxY(i) + 32, boxW(i) - 16, boxH(i) - 48
             CacheNameText AnimGetCacheMode(animId(i)), cacheText
-            _PrintString (boxX(i) + 8, boxY(i) + boxH(i) - 30), "cache=" + cacheText + "  ready=" + LTrim$(Str$(AnimIsCached(animId(i))))
-        Else
-            _PrintString (boxX(i) + 8, boxY(i) + 8), "Open failed"
-        End If
-    Next i
+            _PRINTSTRING (boxX(i) + 8, boxY(i) + boxH(i) - 30), "cache=" + cacheText + "  ready=" + LTRIM$(STR$(AnimIsCached(animId(i))))
+        ELSE
+            _PRINTSTRING (boxX(i) + 8, boxY(i) + 8), "Open failed"
+        END IF
+    NEXT i
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
 AnimFreeAll
-If screenImage <= -2 Then _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub CacheNameText (cacheMode As Long, textValue As String)
+SUB CacheNameText (cacheMode AS LONG, textValue AS STRING)
     textValue = "UNKNOWN"
 
-    Select Case cacheMode
-        Case ANIM_CACHE_STREAM
+    SELECT CASE cacheMode
+        CASE ANIM_CACHE_STREAM
             textValue = "STREAM"
-        Case ANIM_CACHE_PRELOAD_ALL
+        CASE ANIM_CACHE_PRELOAD_ALL
             textValue = "PRELOAD_ALL"
-        Case ANIM_CACHE_WINDOW
+        CASE ANIM_CACHE_WINDOW
             textValue = "WINDOW"
-        Case ANIM_CACHE_AUTO
+        CASE ANIM_CACHE_AUTO
             textValue = "AUTO"
-    End Select
-End Sub
+    END SELECT
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - 40 - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 

@@ -1472,7 +1472,7 @@ End Sub
 
 ' Purpose: Decode or apply Amiga ANIM delta/frame data to the current bitmap.
 ' Parameters: anim = working value for animation; frame = working value for frame; shownPlanar = working value for shown planar; hiddenPlanar = working value for hidden planar; pal = working value for pal.
-Sub AmgAnimDecodeFrameToHidden (anim As AmgAnimInfo, frame As AmgAnimFrameInfo, shownPlanar() As _Unsigned _Byte, hiddenPlanar() As _Unsigned _Byte, pal() As AmgAnimRGB8)
+Sub AmgAnimDecodeFrameToHidden (anim As AmgAnimInfo, frame As AmgAnimFrameInfo, hiddenPlanar() As _Unsigned _Byte, pal() As AmgAnimRGB8)
     If frame.hasCMAP Then
         Call AmgAnimReadCMAPAt(frame.cmapOfs, frame.cmapSize, pal())
     End If
@@ -3455,14 +3455,14 @@ Sub AmgAnimBuildFrameByNumber (anim As AmgAnimInfo, frames() As AmgAnimFrameInfo
                 Call AmgAnimCopyPlanarBuffer(planarA(), planarB())
             End If
 
-            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarA(), planarB(), pal())
+            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarB(), pal())
             shownIsA = 0
         Else
             If usePrev Then
                 Call AmgAnimCopyPlanarBuffer(planarB(), planarA())
             End If
 
-            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarB(), planarA(), pal())
+            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarA(), pal())
             shownIsA = -1
         End If
     Next frameIndex
@@ -3861,7 +3861,7 @@ End Sub
 
 ' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation save scratch work.
 ' Parameters: animId = working value for animation id; pal = working value for pal; totalPlanar = working value for total planar; totalChunky = working value for total chunky.
-Sub AmgAnimSaveScratchWork (animId As Long, pal() As AmgAnimRGB8, totalPlanar As Long, totalChunky As Long)
+Sub AmgAnimSaveScratchWork (animId As Long, pal() As AmgAnimRGB8)
     Call AmgAnimCopyLocalPaletteToScratch(pal())
     amg_anim_scratch_owner = animId
     amg_anim_scratch_owner_valid = -1
@@ -3897,7 +3897,7 @@ Function AmgAnimPrepareBaseState% (animId As Long)
     Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
     Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
     Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_a())
-    Call AmgAnimSaveScratchWork(animId, pal(), totalPlanar, totalChunky)
+    Call AmgAnimSaveScratchWork(animId, pal())
 
     AmgAnimItems(animId).DecodedFrame = 0
     AmgAnimItems(animId).ShownIsA = -1
@@ -3957,7 +3957,7 @@ Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
         Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
         Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
         Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_a())
-        Call AmgAnimSaveScratchWork(animId, pal(), totalPlanar, totalChunky)
+        Call AmgAnimSaveScratchWork(animId, pal())
         AmgAnimItems(animId).DecodedFrame = 0
         AmgAnimItems(animId).ShownIsA = -1
         AmgAnimItems(animId).RenderedFrame = 0
@@ -3988,11 +3988,11 @@ Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
 
             If AmgAnimItems(animId).ShownIsA Then
                 If usePrev Then Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_a(), amg_anim_scratch_planar_b())
-                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_a(), amg_anim_scratch_planar_b(), pal())
+                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_b(), pal())
                 AmgAnimItems(animId).ShownIsA = 0
             Else
                 If usePrev Then Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_b(), amg_anim_scratch_planar_a())
-                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_b(), amg_anim_scratch_planar_a(), pal())
+                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_a(), pal())
                 AmgAnimItems(animId).ShownIsA = -1
             End If
 
@@ -4007,7 +4007,7 @@ Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
         Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_b())
     End If
 
-    Call AmgAnimSaveScratchWork(animId, pal(), totalPlanar, totalChunky)
+    Call AmgAnimSaveScratchWork(animId, pal())
     AmgAnimItems(animId).DecodedFrame = frameNumber
     AmgAnimItems(animId).RenderedFrame = frameNumber
     AmgAnimItems(animId).WorkReady = -1

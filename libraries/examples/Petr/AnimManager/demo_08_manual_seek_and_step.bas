@@ -1,8 +1,8 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 ' demo_08_manual_seek_and_step.bas
 ' Manual playback / seek / cache test.
@@ -18,202 +18,232 @@ $UseLibrary:'Petr/AnimManager'
 '   P = play / resume
 '   Esc = end
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
+
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
 
-Dim screenImage As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim animId As Long
-Dim keyCode As Long
-Dim quitFlag As Integer
-Dim formatText As String
-Dim cacheText As String
-Dim infoText As String
-Dim frameIndex As Long
-Dim cacheMode As Long
+
+DIM screenImage AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM animId AS LONG
+DIM keyCode AS LONG
+DIM quitFlag AS INTEGER
+DIM formatText AS STRING
+DIM cacheText AS STRING
+DIM infoText AS STRING
+DIM frameIndex AS LONG
+DIM cacheMode AS LONG
 
 screenW = 1280
 screenH = 720
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 08 - manual seek and cache test"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 08 - manual seek and cache test"
 
 animId = AnimOpen("BALLOON.FLC")
-If animId >= 0 Then
+IF animId >= 0 THEN
     AnimSetLoop animId, ANIM_LOOP_FOREVER
     AnimSetCacheMode animId, ANIM_CACHE_PRELOAD_ALL
     AnimStart animId
-End If
+END IF
 
-Do
-    keyCode = _KeyHit
-    Select Case keyCode
-        Case 27
+DO
+    keyCode = _KEYHIT
+    SELECT CASE keyCode
+        CASE 27
             quitFlag = -1
 
-        Case 32
-            If animId >= 0 Then
-                If AnimIsPlaying(animId) Then
+        CASE 32
+            IF animId >= 0 THEN
+                IF AnimIsPlaying(animId) THEN
                     AnimPause animId
-                Else
+                ELSE
                     AnimResume animId
-                End If
-            End If
+                END IF
+            END IF
 
-        Case 19200
-            If animId >= 0 Then AnimPause animId: N = AnimStepBackward(animId)
+        CASE 19200
+            IF animId >= 0 THEN AnimPause animId: N = AnimStepBackward(animId)
 
-        Case 19712
-            If animId >= 0 Then AnimPause animId: N = AnimStepForward(animId)
+        CASE 19712
+            IF animId >= 0 THEN AnimPause animId: N = AnimStepForward(animId)
 
-        Case 18176
-            If animId >= 0 Then AnimPause animId: N = AnimSeek(animId, 0)
+        CASE 18176
+            IF animId >= 0 THEN AnimPause animId: N = AnimSeek(animId, 0)
 
-        Case 20224
-            If animId >= 0 Then AnimPause animId: N = AnimSeek(animId, AnimLen(animId) - 1)
+        CASE 20224
+            IF animId >= 0 THEN AnimPause animId: N = AnimSeek(animId, AnimLen(animId) - 1)
 
-        Case 49
-            If animId >= 0 Then AnimPause animId: N = AnimSeekTime(animId, 1000)
+        CASE 49
+            IF animId >= 0 THEN AnimPause animId: N = AnimSeekTime(animId, 1000)
 
-        Case 50
-            If animId >= 0 Then AnimPause animId: N = AnimSeekTime(animId, 2000)
+        CASE 50
+            IF animId >= 0 THEN AnimPause animId: N = AnimSeekTime(animId, 2000)
 
-        Case 67, 99
-            If animId >= 0 Then
+        CASE 67, 99
+            IF animId >= 0 THEN
                 cacheMode = AnimGetCacheMode(animId)
-                If cacheMode = ANIM_CACHE_PRELOAD_ALL Then
+                IF cacheMode = ANIM_CACHE_PRELOAD_ALL THEN
                     AnimSetCacheMode animId, ANIM_CACHE_STREAM
-                Else
+                ELSE
                     AnimSetCacheMode animId, ANIM_CACHE_PRELOAD_ALL
-                End If
-            End If
+                END IF
+            END IF
 
-        Case 83, 115
-            If animId >= 0 Then AnimStop animId
+        CASE 83, 115
+            IF animId >= 0 THEN AnimStop animId
 
-        Case 80, 112
-            If animId >= 0 Then AnimStart animId
-    End Select
+        CASE 80, 112
+            IF animId >= 0 THEN AnimStart animId
+    END SELECT
 
-    If animId >= 0 Then AnimUpdate animId
+    IF animId >= 0 THEN AnimUpdate animId
 
-    Cls , _RGB32(10, 12, 18)
-    _PrintString (20, 18), "Demo 08: manual seek / pause / step / cache mode"
-    _PrintString (20, 40), "Asset: BALLOON.FLC"
+    CLS , _RGB32(10, 12, 18)
+    _PRINTSTRING (20, 18), "Demo 08: manual seek / pause / step / cache mode"
+    _PRINTSTRING (20, 40), "Asset: BALLOON.FLC"
 
-    Line (30, 90)-(850, 650), _RGB32(18, 22, 30), BF
-    Line (30, 90)-(850, 650), _RGB32(140, 180, 230), B
+    LINE (30, 90)-(850, 650), _RGB32(18, 22, 30), BF
+    LINE (30, 90)-(850, 650), _RGB32(140, 180, 230), B
 
-    If animId >= 0 Then
+    IF animId >= 0 THEN
         DrawAnimFit animId, 40, 100, 800, 540
         frameIndex = AnimGetPos(animId)
         FormatNameText AnimFormat(animId), formatText
         CacheNameText AnimGetCacheMode(animId), cacheText
 
-        _PrintString (900, 120), "Format: " + formatText
-        _PrintString (900, 150), "Frame: " + LTrim$(Str$(frameIndex)) + " / " + LTrim$(Str$(AnimLen(animId)))
-        _PrintString (900, 180), "Width x Height: " + LTrim$(Str$(AnimWidth(animId))) + " x " + LTrim$(Str$(AnimHeight(animId)))
-        _PrintString (900, 210), "Playing: " + LTrim$(Str$(AnimIsPlaying(animId)))
-        _PrintString (900, 240), "Cached: " + LTrim$(Str$(AnimIsCached(animId)))
-        _PrintString (900, 270), "Cache mode: " + cacheText
+        _PRINTSTRING (900, 120), "Format: " + formatText
+        _PRINTSTRING (900, 150), "Frame: " + LTRIM$(STR$(frameIndex)) + " / " + LTRIM$(STR$(AnimLen(animId)))
+        _PRINTSTRING (900, 180), "Width x Height: " + LTRIM$(STR$(AnimWidth(animId))) + " x " + LTRIM$(STR$(AnimHeight(animId)))
+        _PRINTSTRING (900, 210), "Playing: " + LTRIM$(STR$(AnimIsPlaying(animId)))
+        _PRINTSTRING (900, 240), "Cached: " + LTRIM$(STR$(AnimIsCached(animId)))
+        _PRINTSTRING (900, 270), "Cache mode: " + cacheText
         infoText = AnimError(animId)
-        If Len(infoText) = 0 Then infoText = "(no error)"
-        _PrintString (900, 300), "Error: " + infoText
-    Else
-        _PrintString (900, 120), "BALLOON.FLC could not be opened."
-    End If
+        IF LEN(infoText) = 0 THEN infoText = "(no error)"
+        _PRINTSTRING (900, 300), "Error: " + infoText
+    ELSE
+        _PRINTSTRING (900, 120), "BALLOON.FLC could not be opened."
+    END IF
 
-    _PrintString (900, 380), "Space  pause/resume"
-    _PrintString (900, 405), "Left   step backward"
-    _PrintString (900, 430), "Right  step forward"
-    _PrintString (900, 455), "Home   first frame"
-    _PrintString (900, 480), "End    last frame"
-    _PrintString (900, 505), "1 / 2  seek to 1000 / 2000 ms"
-    _PrintString (900, 530), "C      toggle cache mode"
-    _PrintString (900, 555), "S / P  stop / play"
-    _PrintString (900, 580), "Esc    end"
+    _PRINTSTRING (900, 380), "Space  pause/resume"
+    _PRINTSTRING (900, 405), "Left   step backward"
+    _PRINTSTRING (900, 430), "Right  step forward"
+    _PRINTSTRING (900, 455), "Home   first frame"
+    _PRINTSTRING (900, 480), "End    last frame"
+    _PRINTSTRING (900, 505), "1 / 2  seek to 1000 / 2000 ms"
+    _PRINTSTRING (900, 530), "C      toggle cache mode"
+    _PRINTSTRING (900, 555), "S / P  stop / play"
+    _PRINTSTRING (900, 580), "Esc    end"
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
 AnimFreeAll
-If screenImage <= -2 Then Screen 0: _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN SCREEN 0: _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub FormatNameText (formatId As Long, textValue As String)
+SUB FormatNameText (formatId AS LONG, textValue AS STRING)
     textValue = "UNKNOWN"
 
-    Select Case formatId
-        Case ANIM_FMT_APNG
+    SELECT CASE formatId
+        CASE ANIM_FMT_APNG
             textValue = "APNG"
-        Case ANIM_FMT_GIF89A
+        CASE ANIM_FMT_GIF89A
             textValue = "GIF89a"
-        Case ANIM_FMT_FLI
+        CASE ANIM_FMT_FLI
             textValue = "FLI"
-        Case ANIM_FMT_FLC
+        CASE ANIM_FMT_FLC
             textValue = "FLC"
-        Case ANIM_FMT_AMIGA_ANIM
+        CASE ANIM_FMT_AMIGA_ANIM
             textValue = "AMIGA ANIM"
-        Case ANIM_FMT_ANI
+        CASE ANIM_FMT_ANI
             textValue = "ANI"
-    End Select
-End Sub
+    END SELECT
+END SUB
 
-Sub CacheNameText (cacheMode As Long, textValue As String)
+SUB CacheNameText (cacheMode AS LONG, textValue AS STRING)
     textValue = "UNKNOWN"
 
-    Select Case cacheMode
-        Case ANIM_CACHE_STREAM
+    SELECT CASE cacheMode
+        CASE ANIM_CACHE_STREAM
             textValue = "STREAM"
-        Case ANIM_CACHE_PRELOAD_ALL
+        CASE ANIM_CACHE_PRELOAD_ALL
             textValue = "PRELOAD_ALL"
-        Case ANIM_CACHE_WINDOW
+        CASE ANIM_CACHE_WINDOW
             textValue = "WINDOW"
-        Case ANIM_CACHE_AUTO
+        CASE ANIM_CACHE_AUTO
             textValue = "AUTO"
-    End Select
-End Sub
+    END SELECT
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 

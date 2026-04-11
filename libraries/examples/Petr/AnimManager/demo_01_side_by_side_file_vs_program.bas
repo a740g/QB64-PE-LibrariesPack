@@ -1,8 +1,8 @@
-$If VERSION < 4.3.0 Then
+$IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$End If
+$END IF
 
-$UseLibrary:'Petr/AnimManager'
+$USELIBRARY:'Petr/AnimManager'
 
 
 ' demo_01_side_by_side_file_vs_program.bas
@@ -10,28 +10,51 @@ $UseLibrary:'Petr/AnimManager'
 ' Right: generated procedural animation.
 ' Esc = end.
 
+'--- Find the root of the program's source folder.
+DIM AS STRING sep, root, qbfo, filename, oldDir
+oldDir = _CWD$
+$IF WIN THEN
+    sep$ = "\"
+$ELSE
+    sep$ = "/"
+$END IF
+filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
+filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
 
+IF _FILEEXISTS(filename$) THEN
+    root$ = ""
+ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+    root$ = "libraries\examples\Petr\AnimManager\"
+    CHDIR root$
+ELSE
+    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
+    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+        root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
+    ELSE
+        PRINT
+        PRINT "ERROR: Can't locate the program's source folder, please run again"
+        PRINT "       and select your QB64-PE folder when ask for it."
+        END
+    END IF
+END IF
+'-----
 
-Declare Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-Declare Sub DrawProgramScene (boxX As Long, boxY As Long, boxW As Long, boxH As Long, phaseSec As Double)
-Declare Sub DrawFramePanel (x As Long, y As Long, w As Long, h As Long, caption As String)
-
-Dim screenImage As Long
-Dim animId As Long
-Dim quitFlag As Integer
-Dim keyCode As Long
-Dim screenW As Long
-Dim screenH As Long
-Dim leftX As Long
-Dim leftY As Long
-Dim leftW As Long
-Dim leftH As Long
-Dim rightX As Long
-Dim rightY As Long
-Dim rightW As Long
-Dim rightH As Long
-Dim phaseSec As Double
-Dim infoText As String
+DIM screenImage AS LONG
+DIM animId AS LONG
+DIM quitFlag AS INTEGER
+DIM keyCode AS LONG
+DIM screenW AS LONG
+DIM screenH AS LONG
+DIM leftX AS LONG
+DIM leftY AS LONG
+DIM leftW AS LONG
+DIM leftH AS LONG
+DIM rightX AS LONG
+DIM rightY AS LONG
+DIM rightW AS LONG
+DIM rightH AS LONG
+DIM phaseSec AS DOUBLE
+DIM infoText AS STRING
 
 screenW = 1280
 screenH = 720
@@ -44,76 +67,77 @@ rightY = 90
 rightW = 580
 rightH = 580
 
-screenImage = _NewImage(screenW, screenH, 32)
-Screen screenImage
-_Title "Demo 01 - side by side file vs programmed animation"
+screenImage = _NEWIMAGE(screenW, screenH, 32)
+SCREEN screenImage
+_TITLE "Demo 01 - side by side file vs programmed animation"
 
 animId = AnimOpen("APPLE.FLI")
-If animId >= 0 Then
+IF animId >= 0 THEN
     AnimSetLoop animId, ANIM_LOOP_FOREVER
     AnimStart animId
-End If
+END IF
 
-Do
-    keyCode = _KeyHit
-    If keyCode = 27 Then quitFlag = -1
+DO
+    keyCode = _KEYHIT
+    IF keyCode = 27 THEN quitFlag = -1
 
-    If animId >= 0 Then AnimUpdate animId
+    IF animId >= 0 THEN AnimUpdate animId
 
-    Cls , _RGB32(8, 10, 18)
-    _PrintString (24, 20), "Demo 01: file animation on the left, generated animation on the right"
-    _PrintString (24, 42), "Asset: APPLE.FLI    Esc = end"
+    CLS , _RGB32(8, 10, 18)
+    _PRINTSTRING (24, 20), "Demo 01: file animation on the left, generated animation on the right"
+    _PRINTSTRING (24, 42), "Asset: APPLE.FLI    Esc = end"
 
     DrawFramePanel leftX, leftY, leftW, leftH, "File animation: APPLE.FLI"
     DrawFramePanel rightX, rightY, rightW, rightH, "Generated animation"
 
-    If animId >= 0 Then
+    IF animId >= 0 THEN
         DrawAnimFit animId, leftX + 10, leftY + 10, leftW - 20, leftH - 20
-        infoText = "frame " + LTrim$(Str$(AnimGetPos(animId))) + " / " + LTrim$(Str$(AnimLen(animId)))
-        _PrintString (leftX + 12, leftY + leftH + 8), infoText
-    Else
-        _PrintString (leftX + 12, leftY + 18), "APPLE.FLI could not be opened."
-    End If
+        infoText = "frame " + LTRIM$(STR$(AnimGetPos(animId))) + " / " + LTRIM$(STR$(AnimLen(animId)))
+        _PRINTSTRING (leftX + 12, leftY + leftH + 8), infoText
+    ELSE
+        _PRINTSTRING (leftX + 12, leftY + 18), "APPLE.FLI could not be opened."
+    END IF
 
-    phaseSec = Timer
+    phaseSec = TIMER
     DrawProgramScene rightX + 10, rightY + 10, rightW - 20, rightH - 20, phaseSec
-    _PrintString (rightX + 12, rightY + rightH + 8), "Procedural scene driven by TIMER"
+    _PRINTSTRING (rightX + 12, rightY + rightH + 8), "Procedural scene driven by TIMER"
 
-    _Display
-    _Limit 60
-Loop Until quitFlag
+    _DISPLAY
+    _LIMIT 60
+LOOP UNTIL quitFlag
 
 AnimFreeAll
-If screenImage <= -2 Then Screen 0: _FreeImage screenImage: screenImage = 0
-End
+CHDIR oldDir
+IF screenImage <= -2 THEN SCREEN 0: _FREEIMAGE screenImage: screenImage = 0
+END
 
-Sub DrawFramePanel (x As Long, y As Long, w As Long, h As Long, caption As String)
-    Line (x - 2, y - 26)-(x + w + 1, y + h + 1), _RGB32(75, 95, 130), BF
-    Line (x - 2, y - 26)-(x + w + 1, y + h + 1), _RGB32(240, 240, 255), B
-    Line (x, y)-(x + w - 1, y + h - 1), _RGB32(18, 22, 30), BF
-    Line (x, y)-(x + w - 1, y + h - 1), _RGB32(120, 150, 210), B
-    _PrintString (x + 8, y - 18), caption
-End Sub
+SUB DrawFramePanel (x AS LONG, y AS LONG, w AS LONG, h AS LONG, caption AS STRING)
+    LINE (x - 2, y - 26)-(x + w + 1, y + h + 1), _RGB32(75, 95, 130), BF
+    LINE (x - 2, y - 26)-(x + w + 1, y + h + 1), _RGB32(240, 240, 255), B
+    LINE (x, y)-(x + w - 1, y + h - 1), _RGB32(18, 22, 30), BF
+    LINE (x, y)-(x + w - 1, y + h - 1), _RGB32(120, 150, 210), B
+    _PRINTSTRING (x + 8, y - 18), caption
+END SUB
 
-Sub DrawProgramScene (boxX As Long, boxY As Long, boxW As Long, boxH As Long, phaseSec As Double)
-    Dim centerX As Long
-    Dim centerY As Long
-    Dim radiusA As Double
-    Dim radiusB As Double
-    Dim i As Long
-    Dim px As Long
-    Dim py As Long
-    Dim ringColor As _Unsigned Long
-    Dim phaseA As Double
-    Dim starX As Long
-    Dim starY As Long
-    Dim boxRight As Long
-    Dim boxBottom As Long
-    Dim pulseSize As Long
-    Dim shipX As Long
-    Dim shipY As Long
-    Dim waveY As Long
-    Dim piValue As Double
+SUB DrawProgramScene (boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG, phaseSec AS DOUBLE)
+    DIM centerX AS LONG
+    DIM centerY AS LONG
+    DIM radiusA AS DOUBLE
+    DIM radiusB AS DOUBLE
+    DIM i AS LONG
+    DIM px AS LONG
+    DIM py AS LONG
+    DIM ringColor AS _UNSIGNED LONG
+    DIM phaseA AS DOUBLE
+    DIM starX AS LONG
+    DIM starY AS LONG
+    DIM boxRight AS LONG
+    DIM boxBottom AS LONG
+    DIM pulseSize AS LONG
+    DIM shipX AS LONG
+    DIM shipY AS LONG
+    DIM waveY AS LONG
+    DIM piValue AS DOUBLE
 
     centerX = boxX + boxW \ 2
     centerY = boxY + boxH \ 2
@@ -121,77 +145,77 @@ Sub DrawProgramScene (boxX As Long, boxY As Long, boxW As Long, boxH As Long, ph
     radiusB = boxH * 0.28
     boxRight = boxX + boxW - 1
     boxBottom = boxY + boxH - 1
-    piValue = Atn(1) * 4
+    piValue = ATN(1) * 4
 
-    Line (boxX, boxY)-(boxRight, boxBottom), _RGB32(8, 10, 18), BF
+    LINE (boxX, boxY)-(boxRight, boxBottom), _RGB32(8, 10, 18), BF
 
-    For i = 0 To 60
-        starX = boxX + ((i * 37) Mod boxW)
-        starY = boxY + ((i * 53 + Int(phaseSec * 40)) Mod boxH)
-        PSet (starX, starY), _RGB32(180, 180, 220)
-    Next i
+    FOR i = 0 TO 60
+        starX = boxX + ((i * 37) MOD boxW)
+        starY = boxY + ((i * 53 + INT(phaseSec * 40)) MOD boxH)
+        PSET (starX, starY), _RGB32(180, 180, 220)
+    NEXT i
 
-    For i = 0 To 11
+    FOR i = 0 TO 11
         phaseA = phaseSec * 1.2 + i * (piValue / 6)
-        px = centerX + CLng(Cos(phaseA) * radiusA)
-        py = centerY + CLng(Sin(phaseA * 1.5) * radiusB)
+        px = centerX + CLNG(COS(phaseA) * radiusA)
+        py = centerY + CLNG(SIN(phaseA * 1.5) * radiusB)
         ringColor = _RGB32(100 + (i * 12), 110 + (i * 10), 230)
-        Circle (px, py), 18 + (i Mod 3) * 4, ringColor
-        Paint (px, py), _RGB32(20 + i * 8, 20 + i * 5, 70 + i * 10), ringColor
-    Next i
+        CIRCLE (px, py), 18 + (i MOD 3) * 4, ringColor
+        PAINT (px, py), _RGB32(20 + i * 8, 20 + i * 5, 70 + i * 10), ringColor
+    NEXT i
 
-    pulseSize = 34 + CLng((Sin(phaseSec * 3.2) + 1) * 18)
-    Line (centerX - pulseSize, centerY - pulseSize)-(centerX + pulseSize, centerY + pulseSize), _RGB32(255, 210, 40), B
+    pulseSize = 34 + CLNG((SIN(phaseSec * 3.2) + 1) * 18)
+    LINE (centerX - pulseSize, centerY - pulseSize)-(centerX + pulseSize, centerY + pulseSize), _RGB32(255, 210, 40), B
 
-    shipX = boxX + 40 + ((CLng(phaseSec * 180) Mod (boxW - 80)))
-    waveY = boxY + boxH \ 2 + CLng(Sin(phaseSec * 4) * (boxH * 0.2))
+    shipX = boxX + 40 + ((CLNG(phaseSec * 180) MOD (boxW - 80)))
+    waveY = boxY + boxH \ 2 + CLNG(SIN(phaseSec * 4) * (boxH * 0.2))
     shipY = waveY
-    Line (shipX - 26, shipY + 6)-(shipX + 26, shipY + 6), _RGB32(240, 240, 255)
-    Line (shipX - 18, shipY - 8)-(shipX + 18, shipY - 8), _RGB32(240, 240, 255)
-    Line (shipX - 18, shipY - 8)-(shipX - 26, shipY + 6), _RGB32(240, 240, 255)
-    Line (shipX + 18, shipY - 8)-(shipX + 26, shipY + 6), _RGB32(240, 240, 255)
-    Circle (shipX, shipY - 2), 8, _RGB32(100, 220, 255)
-    Paint (shipX, shipY - 2), _RGB32(40, 120, 180), _RGB32(100, 220, 255)
-End Sub
+    LINE (shipX - 26, shipY + 6)-(shipX + 26, shipY + 6), _RGB32(240, 240, 255)
+    LINE (shipX - 18, shipY - 8)-(shipX + 18, shipY - 8), _RGB32(240, 240, 255)
+    LINE (shipX - 18, shipY - 8)-(shipX - 26, shipY + 6), _RGB32(240, 240, 255)
+    LINE (shipX + 18, shipY - 8)-(shipX + 26, shipY + 6), _RGB32(240, 240, 255)
+    CIRCLE (shipX, shipY - 2), 8, _RGB32(100, 220, 255)
+    PAINT (shipX, shipY - 2), _RGB32(40, 120, 180), _RGB32(100, 220, 255)
+END SUB
 
-Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
-    Dim srcW As Long
-    Dim srcH As Long
-    Dim drawW As Long
-    Dim drawH As Long
-    Dim drawX As Long
-    Dim drawY As Long
-    Dim scaleX As Double
-    Dim scaleY As Double
-    Dim scaleValue As Double
+SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+    DIM srcW AS LONG
+    DIM srcH AS LONG
+    DIM drawW AS LONG
+    DIM drawH AS LONG
+    DIM drawX AS LONG
+    DIM drawY AS LONG
+    DIM scaleX AS DOUBLE
+    DIM scaleY AS DOUBLE
+    DIM scaleValue AS DOUBLE
 
-    If AnimValid(animId) = 0 Then Exit Sub
+    IF AnimValid(animId) = 0 THEN EXIT SUB
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    If srcW <= 0 Or srcH <= 0 Then Exit Sub
-    If boxW <= 0 Or boxH <= 0 Then Exit Sub
+    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
+    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    If scaleX < scaleY Then
+    IF scaleX < scaleY THEN
         scaleValue = scaleX
-    Else
+    ELSE
         scaleValue = scaleY
-    End If
+    END IF
 
-    If scaleValue <= 0 Then Exit Sub
+    IF scaleValue <= 0 THEN EXIT SUB
 
-    drawW = CLng(srcW * scaleValue)
-    drawH = CLng(srcH * scaleValue)
-    If drawW < 1 Then drawW = 1
-    If drawH < 1 Then drawH = 1
+    drawW = CLNG(srcW * scaleValue)
+    drawH = CLNG(srcH * scaleValue)
+    IF drawW < 1 THEN drawW = 1
+    IF drawH < 1 THEN drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-End Sub
+END SUB
 
 
