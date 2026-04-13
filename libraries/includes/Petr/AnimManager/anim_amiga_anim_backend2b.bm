@@ -153,16 +153,52 @@ Function AmgAnimOpenLimit& (fileName As String, maxWidth As Long, maxHeight As L
         AmgAnimItems(slotId).SnapshotPaletteStart = -1
     End If
 
-    If AmgAnimItems(slotId).WorkBaseStart < 0 Then Exit Function
-    If AmgAnimItems(slotId).WorkAStart < 0 Then Exit Function
-    If AmgAnimItems(slotId).WorkBStart < 0 Then Exit Function
-    If AmgAnimItems(slotId).ChunkyStart < 0 Then Exit Function
-    If AmgAnimItems(slotId).PalStart < 0 Then Exit Function
-    If AmgAnimItems(slotId).SnapshotMetaStart < 0 Then Exit Function
+    If AmgAnimItems(slotId).WorkBaseStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work base allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).WorkAStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work A allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).WorkBStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work B allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).ChunkyStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: chunky allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).PalStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: palette allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).SnapshotMetaStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot meta allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
     If snapshotCount > 0 Then
-        If AmgAnimItems(slotId).SnapshotPlanarAStart < 0 Then Exit Function
-        If AmgAnimItems(slotId).SnapshotPlanarBStart < 0 Then Exit Function
-        If AmgAnimItems(slotId).SnapshotPaletteStart < 0 Then Exit Function
+        If AmgAnimItems(slotId).SnapshotPlanarAStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot planar A allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
+        If AmgAnimItems(slotId).SnapshotPlanarBStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot planar B allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
+        If AmgAnimItems(slotId).SnapshotPaletteStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot palette allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
     End If
 
     AmgAnimCopyLocalPaletteToPool pal(), AmgAnimItems(slotId).PalStart, AmgAnimItems(slotId).PalCount
@@ -175,14 +211,18 @@ Function AmgAnimOpenLimit& (fileName As String, maxWidth As Long, maxHeight As L
     End If
 
     AmgAnimItems(slotId).CanvasImage = imageHandle
-
-    If AmgAnimRenderFrameToCanvas(slotId, 0) = 0 Then
-        AmgAnimSetError slotId, "AmgAnimOpenLimit: failed to render frame 0"
+    AmgAnimCanvasMem(slotId) = _MemImage(imageHandle)
+    If _MemExists(AmgAnimCanvasMem(slotId)) = 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: failed to map canvas memory"
+        If imageHandle <= -2 Then _FreeImage imageHandle: imageHandle = 0
+        AmgAnimItems(slotId).CanvasImage = 0
         AmgAnimInitSlot slotId
         Exit Function
     End If
 
-    AmgAnimItems(slotId).RenderedFrame = 0
+    ' Delay first decode/render until the frame is actually requested.
+    ' This removes one expensive decode pass from open time.
+    AmgAnimItems(slotId).RenderedFrame = -1
     AmgAnimOpenLimit = slotId
 End Function
 
@@ -229,6 +269,7 @@ Sub AmgAnimClose (animId As Long)
     If amg_anim_scratch_owner_valid Then
         If amg_anim_scratch_owner = animId Then amg_anim_scratch_owner_valid = 0
     End If
+    If _MemExists(AmgAnimCanvasMem(animId)) Then _MemFree AmgAnimCanvasMem(animId)
     If AmgAnimItems(animId).CanvasImage <= -2 Then _FreeImage AmgAnimItems(animId).CanvasImage: AmgAnimItems(animId).CanvasImage = 0
     AmgAnimInitSlot animId
 End Sub
@@ -620,6 +661,7 @@ Function AmgAnimAllocSlot& ()
     ReDim _Preserve AmgAnimFileNames(oldTop + 1) As String
     ' dynamic array: AmgAnimErrorTexts is resized here to hold the text storage for the last human-readable error message.
     ReDim _Preserve AmgAnimErrorTexts(oldTop + 1) As String
+    ReDim _Preserve AmgAnimCanvasMem(oldTop + 1) As _MEM
     AmgAnimAllocSlot = oldTop + 1
 End Function
 
@@ -645,6 +687,7 @@ Sub AmgAnimInitSlot (animId As Long)
     AmgAnimItems(animId).NextTick = 0
     AmgAnimItems(animId).RemainingDelay = 0
     AmgAnimItems(animId).LastRawTimer = 0
+    If _MemExists(AmgAnimCanvasMem(animId)) Then _MemFree AmgAnimCanvasMem(animId)
     If AmgAnimItems(animId).CanvasImage <= -2 Then _FreeImage AmgAnimItems(animId).CanvasImage: AmgAnimItems(animId).CanvasImage = 0
     AmgAnimItems(animId).RenderedFrame = -1
     AmgAnimItems(animId).DecodedFrame = -1
@@ -652,6 +695,19 @@ Sub AmgAnimInitSlot (animId As Long)
     AmgAnimItems(animId).WorkReady = 0
     AmgAnimItems(animId).FileDataStart = 0
     AmgAnimItems(animId).FileDataSize = 0
+    AmgAnimItems(animId).NPlanes = 0
+    AmgAnimItems(animId).RowBytes = 0
+    AmgAnimItems(animId).PlaneSize = 0
+    AmgAnimItems(animId).Compression = 0
+    AmgAnimItems(animId).Camg = 0
+    AmgAnimItems(animId).IsHam = 0
+    AmgAnimItems(animId).PalCount = 0
+    AmgAnimItems(animId).PalStart = 0
+    AmgAnimItems(animId).WorkBaseStart = 0
+    AmgAnimItems(animId).WorkAStart = 0
+    AmgAnimItems(animId).WorkBStart = 0
+    AmgAnimItems(animId).ChunkyStart = 0
+    AmgAnimItems(animId).PixelsStart = 0
     AmgAnimItems(animId).SnapshotMetaStart = 0
     AmgAnimItems(animId).SnapshotCount = 0
     AmgAnimItems(animId).SnapshotInterval = 0
@@ -1200,8 +1256,6 @@ Sub AmgAnimLoadIndex (anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() A
     Dim formType As String
     ' Variable: formDataOfs stores the buffer that holds raw, packed, or decoded byte data.
     Dim formDataOfs As _Unsigned _Integer64
-    ' Variable: frameCount stores the total number of frames available for the current animation.
-    Dim frameCount As Long
 
     bufOfs = 0
     topId = AmgAnimReadIDFromBuf$(bufOfs)
@@ -1220,16 +1274,79 @@ Sub AmgAnimLoadIndex (anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() A
         Exit Sub
     End If
 
-    frameCount = AmgAnimCountAnimFrames(formDataOfs, formSize - 4)
-    If frameCount > 0 Then
-        ' dynamic array: frames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
-        ReDim frames(frameCount - 1) As AmgAnimFrameInfo
+    ' Start with an empty frame array and grow it while scanning.
+    ' This avoids a full extra pass through the file just to count frames.
+    ReDim frames(0) As AmgAnimFrameInfo
+    Call AmgAnimScanAnimFormGrow(formDataOfs, formSize - 4, anim, frames(), pal())
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation scan animation form.
+' Parameters: formDataOfs = buffer that holds raw, packed, or decoded byte data; formSize = working value for form size; anim = working value for animation; frames = dynamic array that stores per-frame data or cached frame metadata; pal = working value for pal.
+Sub AmgAnimScanAnimFormGrow (formDataOfs As _Unsigned _Integer64, formSize As _Unsigned Long, anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() As AmgAnimRGB8)
+    ' Variable: formEnd stores the working value for form end.
+    Dim formEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: subPos stores the working value for sub pos.
+    Dim subPos As _Unsigned _Integer64
+    ' Variable: ck stores the working value for ck.
+    Dim ck As AmgAnimIffChunkInfo
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: subType stores the working value for sub type.
+    Dim subType As String
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: frameCapacity stores the current allocated frame capacity.
+    Dim frameCapacity As Long
+    ' Variable: newCapacity stores the next allocated frame capacity.
+    Dim newCapacity As Long
+
+    formEnd = formDataOfs + formSize
+    frameIndex = -1
+    frameCapacity = 0
+    bufOfs = formDataOfs
+
+    Do While bufOfs < formEnd
+        Call AmgAnimReadIffChunk(bufOfs, formEnd, ck, ok)
+        If ok = 0 Then Exit Do
+
+        If ck.id = "FORM" Then
+            subPos = ck.dataOfs
+            subType = AmgAnimReadIDFromBuf$(subPos)
+
+            If subType = "ILBM" Then
+                frameIndex = frameIndex + 1
+
+                If frameIndex > frameCapacity Then
+                    If frameCapacity <= 0 Then
+                        newCapacity = 15
+                    Else
+                        newCapacity = frameCapacity * 2 + 1
+                    End If
+                    ReDim _Preserve frames(newCapacity) As AmgAnimFrameInfo
+                    frameCapacity = newCapacity
+                End If
+
+                frames(frameIndex).fileOfs = ck.dataOfs - 8
+                frames(frameIndex).formSize = ck.size
+                Call AmgAnimScanIlbmFrame(ck.dataOfs + 4, ck.size - 4, frameIndex, anim, frames(frameIndex), pal())
+            End If
+        End If
+
+        bufOfs = ck.nextOfs
+    Loop
+
+    If frameIndex >= 0 Then
+        anim.frameCount = frameIndex + 1
+        If frameIndex < UBound(frames) Then
+            ReDim _Preserve frames(frameIndex) As AmgAnimFrameInfo
+        End If
     Else
-        ' dynamic array: frames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+        anim.frameCount = 0
         ReDim frames(0) As AmgAnimFrameInfo
     End If
-
-    Call AmgAnimScanAnimForm(formDataOfs, formSize - 4, anim, frames(), pal())
 End Sub
 
 
@@ -2115,7 +2232,22 @@ End Sub
 ' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
 ' Parameters: bufOfs = working value for buf ofs; value = working value for value.
 Sub AmgAnimReadByte (bufOfs As _Unsigned _Integer64, value As _Unsigned _Byte)
-    value = AmgAnimGetActiveByte(bufOfs)
+    value = 0
+
+    If amg_anim_active_mode = 1 Then
+        If amg_anim_active_pool_size > 0 Then
+            If bufOfs <= amg_anim_active_pool_size - 1 Then
+                value = amg_anim_data_pool(amg_anim_active_pool_ofs + bufOfs)
+            End If
+        End If
+    Else
+        If amg_anim_file_size > 0 Then
+            If bufOfs <= amg_anim_file_size - 1 Then
+                value = amg_anim_buf(bufOfs)
+            End If
+        End If
+    End If
+
     bufOfs = bufOfs + 1
 End Sub
 
@@ -2781,7 +2913,7 @@ End Sub
 
 ' Purpose: Convert decoded Amiga bitmap state into a QB64 image.
 ' Parameters: targetImg = QB64 image handle used to store or draw decoded pixels; anim = working value for animation; pal = working value for pal; chunky = working value for chunky.
-Sub AmgAnimRenderChunkyFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, chunky() As _Unsigned _Byte)
+Sub AmgAnimRenderChunkyFrameMem (animId As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, chunky() As _Unsigned _Byte)
     ' Variable: x stores the horizontal pixel or coordinate index.
     Dim x As Long
     ' Variable: y stores the vertical pixel or coordinate index.
@@ -2815,7 +2947,9 @@ Sub AmgAnimRenderChunkyFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
     ' Variable: i stores the general-purpose loop index.
     Dim i As Long
 
-    If targetImg > -2 Then Exit Sub
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    If _MemExists(AmgAnimCanvasMem(animId)) = 0 Then Exit Sub
     pixelCount = anim.w * anim.h
     If pixelCount <= 0 Then Exit Sub
     If pixelCount <> amg_anim_scratch_pixels_size Then
@@ -2903,15 +3037,78 @@ Sub AmgAnimRenderChunkyFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
         Next i
     End If
 
-    frameMem = _MemImage(targetImg)
+    frameMem = AmgAnimCanvasMem(animId)
+    If _MemExists(frameMem) = 0 Then Exit Sub
     _MemPut frameMem, frameMem.OFFSET, amg_anim_scratch_pixels()
-    If _MemExists(frameMem) Then _MemFree frameMem
 End Sub
 
 
 ' Purpose: Convert decoded Amiga bitmap state into a QB64 image.
 ' Parameters: targetImg = QB64 image handle used to store or draw decoded pixels; anim = working value for animation; pal = working value for pal; planar = working value for planar.
-Sub AmgAnimRenderPlanarFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, planar() As _Unsigned _Byte)
+
+' Purpose: Initialize lookup tables used by the fast planar renderer.
+' Parameters: none.
+Sub AmgAnimInitPlanarRenderLUT ()
+    ' Variable: planeIndex stores the index variable used to address the current item.
+    Dim planeIndex As Long
+    ' Variable: byteValue stores the current byte value being expanded into lookup entries.
+    Dim byteValue As Long
+    ' Variable: tableIndex stores the linearized index into the packed lookup tables.
+    Dim tableIndex As Long
+    ' Variable: weightValue stores the bit weight contributed by the current plane.
+    Dim weightValue As _Unsigned Long
+    ' Variable: packLo stores packed contributions for the first four pixels of an 8-pixel group.
+    Dim packLo As _Unsigned Long
+    ' Variable: packHi stores packed contributions for the last four pixels of an 8-pixel group.
+    Dim packHi As _Unsigned Long
+    ' Variable: mul1 stores the byte multiplier for packed pixel 1.
+    Dim mul1 As _Unsigned Long
+    ' Variable: mul2 stores the byte multiplier for packed pixel 2.
+    Dim mul2 As _Unsigned Long
+    ' Variable: mul3 stores the byte multiplier for packed pixel 3.
+    Dim mul3 As _Unsigned Long
+
+    If amg_anim_plane_pack_ready Then Exit Sub
+
+    mul1 = 256
+    mul2 = 65536
+    mul3 = 16777216
+
+    ReDim amg_anim_plane_pack_lo(2047) As _Unsigned Long
+    ReDim amg_anim_plane_pack_hi(2047) As _Unsigned Long
+
+    ' Loop purpose: build one lookup slice per bitplane.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For planeIndex = 0 To 7
+        weightValue = 2 ^ planeIndex
+
+        ' Loop purpose: expand each possible source byte into packed pixel contributions.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For byteValue = 0 To 255
+            tableIndex = planeIndex * 256 + byteValue
+            packLo = 0
+            packHi = 0
+
+            If (byteValue And 128) <> 0 Then packLo = packLo Or weightValue
+            If (byteValue And 64) <> 0 Then packLo = packLo Or (weightValue * mul1)
+            If (byteValue And 32) <> 0 Then packLo = packLo Or (weightValue * mul2)
+            If (byteValue And 16) <> 0 Then packLo = packLo Or (weightValue * mul3)
+
+            If (byteValue And 8) <> 0 Then packHi = packHi Or weightValue
+            If (byteValue And 4) <> 0 Then packHi = packHi Or (weightValue * mul1)
+            If (byteValue And 2) <> 0 Then packHi = packHi Or (weightValue * mul2)
+            If (byteValue And 1) <> 0 Then packHi = packHi Or (weightValue * mul3)
+
+            amg_anim_plane_pack_lo(tableIndex) = packLo
+            amg_anim_plane_pack_hi(tableIndex) = packHi
+        Next byteValue
+    Next planeIndex
+
+    amg_anim_plane_pack_ready = -1
+End Sub
+
+
+Sub AmgAnimRenderPlanarFrameMem (animId As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, planar() As _Unsigned _Byte)
     ' Variable: y stores the vertical pixel or coordinate index.
     Dim y As Long
     ' Variable: xByte stores the working value for x byte.
@@ -2922,32 +3119,8 @@ Sub AmgAnimRenderPlanarFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
     Dim rowBase As Long
     ' Array: planeBase stores the working value for plane base.
     Dim planeBase(7) As Long
-    ' Array: pb stores the working value for pb.
-    Dim pb(7) As _Unsigned _Byte
-    ' Variable: c0 stores the working value for c 0.
-    Dim c0 As Long
-    ' Variable: c1 stores the working value for c 1.
-    Dim c1 As Long
-    ' Variable: c2 stores the working value for c 2.
-    Dim c2 As Long
-    ' Variable: c3 stores the working value for c 3.
-    Dim c3 As Long
-    ' Variable: c4 stores the working value for c 4.
-    Dim c4 As Long
-    ' Variable: c5 stores the working value for c 5.
-    Dim c5 As Long
-    ' Variable: c6 stores the working value for c 6.
-    Dim c6 As Long
-    ' Variable: c7 stores the working value for c 7.
-    Dim c7 As Long
-    ' Variable: bitValue stores the working value for bit value.
-    Dim bitValue As Long
-    ' Variable: baseX stores the working value for base x.
+     ' Variable: baseX stores the working value for base x.
     Dim baseX As Long
-    ' Variable: rowPixelBase stores the row pointer, row buffer, or row index used for image processing.
-    Dim rowPixelBase As Long
-    ' Variable: rowPixelLimit stores the row pointer, row buffer, or row index used for image processing.
-    Dim rowPixelLimit As Long
     ' Variable: pixelCount stores the count used to size or iterate the current data set.
     Dim pixelCount As Long
     ' Variable: frameMem stores the memory handle or memory-related helper value.
@@ -2956,27 +3129,25 @@ Sub AmgAnimRenderPlanarFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
     Dim pal32(255) As _Unsigned Long
     ' Variable: i stores the general-purpose loop index.
     Dim i As Long
-    ' Variable: b0 stores the working value for b 0.
-    Dim b0 As _Unsigned _Byte
-    ' Variable: b1 stores the working value for b 1.
-    Dim b1 As _Unsigned _Byte
-    ' Variable: b2 stores the working value for b 2.
-    Dim b2 As _Unsigned _Byte
-    ' Variable: b3 stores the working value for b 3.
-    Dim b3 As _Unsigned _Byte
-    ' Variable: b4 stores the working value for b 4.
-    Dim b4 As _Unsigned _Byte
-    ' Variable: b5 stores the working value for b 5.
-    Dim b5 As _Unsigned _Byte
-    ' Variable: b6 stores the working value for b 6.
-    Dim b6 As _Unsigned _Byte
-    ' Variable: b7 stores the working value for b 7.
-    Dim b7 As _Unsigned _Byte
+    ' Variable: fullByteCount stores how many complete 8-pixel source bytes are needed for the row width.
+    Dim fullByteCount As Long
+    ' Variable: tailPixels stores how many pixels are left in the partial byte at row end.
+    Dim tailPixels As Long
+    ' Variable: byteOfs stores the source offset of the current planar byte inside the row.
+    Dim byteOfs As Long
+    ' Variable: tableIndex stores the linearized index into the packed planar render lookup tables.
+    Dim tableIndex As Long
+    ' Variable: packLo stores packed 4-pixel indices for pixels 0..3 of the current byte group.
+    Dim packLo As _Unsigned Long
+    ' Variable: packHi stores packed 4-pixel indices for pixels 4..7 of the current byte group.
+    Dim packHi As _Unsigned Long
 
-    If targetImg > -2 Then Exit Sub
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    If _MemExists(AmgAnimCanvasMem(animId)) = 0 Then Exit Sub
     If anim.isHAM Then
         Call AmgAnimPlanarToChunky(anim, planar(), amg_anim_scratch_chunky())
-        Call AmgAnimRenderChunkyFrameMem(targetImg, anim, pal(), amg_anim_scratch_chunky())
+        Call AmgAnimRenderChunkyFrameMem(animId, anim, pal(), amg_anim_scratch_chunky())
         Exit Sub
     End If
 
@@ -2991,11 +3162,13 @@ Sub AmgAnimRenderPlanarFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
     If anim.nPlanes <= 0 Then Exit Sub
     If anim.nPlanes > 8 Then
         Call AmgAnimPlanarToChunky(anim, planar(), amg_anim_scratch_chunky())
-        Call AmgAnimRenderChunkyFrameMem(targetImg, anim, pal(), amg_anim_scratch_chunky())
+        Call AmgAnimRenderChunkyFrameMem(animId, anim, pal(), amg_anim_scratch_chunky())
         Exit Sub
     End If
 
-    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    Call AmgAnimInitPlanarRenderLUT
+
+    ' Loop purpose: convert palette entries once per render pass.
     ' The loop order matters because later statements expect the data to be visited sequentially.
     For i = 0 To 255
         If i <= UBound(pal) Then
@@ -3005,414 +3178,106 @@ Sub AmgAnimRenderPlanarFrameMem (targetImg As Long, anim As AmgAnimInfo, pal() A
         End If
     Next i
 
-    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+    ' Loop purpose: precompute the start offset of each bitplane in the planar source buffer.
     ' The loop order matters because later statements expect the data to be visited sequentially.
     For p = 0 To anim.nPlanes - 1
         planeBase(p) = p * anim.planeSize
     Next p
 
+    fullByteCount = anim.w \ 8
+    tailPixels = anim.w And 7
+
     ' Loop purpose: iterate through image rows or vertical positions.
     ' The loop order matters because later statements expect the data to be visited sequentially.
     For y = 0 To anim.h - 1
         rowBase = y * anim.rowBytes
-        rowPixelBase = y * anim.w
-        rowPixelLimit = rowPixelBase + anim.w
+        baseX = y * anim.w
 
-        ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+        ' Loop purpose: decode all full 8-pixel byte groups without width-bound checks.
         ' The loop order matters because later statements expect the data to be visited sequentially.
-        For xByte = 0 To anim.rowBytes - 1
-            baseX = rowPixelBase + xByte * 8
-            If baseX >= rowPixelLimit Then Exit For
+        For xByte = 0 To fullByteCount - 1
+            byteOfs = rowBase + xByte
+            packLo = 0
+            packHi = 0
 
-            c0 = 0: c1 = 0: c2 = 0: c3 = 0
-            c4 = 0: c5 = 0: c6 = 0: c7 = 0
+            ' Loop purpose: merge the contribution from each active plane into the packed pixel indices.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                tableIndex = p * 256 + planar(planeBase(p) + byteOfs)
+                packLo = packLo Or amg_anim_plane_pack_lo(tableIndex)
+                packHi = packHi Or amg_anim_plane_pack_hi(tableIndex)
+            Next p
 
-            Select Case anim.nPlanes
-                Case 1
-                b0 = planar(planeBase(0) + rowBase + xByte)
+            amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+            amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+            amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+            amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+            amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+            amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+            amg_anim_scratch_pixels(baseX + 6) = pal32((packHi \ 65536) And 255)
+            amg_anim_scratch_pixels(baseX + 7) = pal32((packHi \ 16777216) And 255)
 
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-
-                Case 2
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-
-                Case 3
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-
-                Case 4
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-                b3 = planar(planeBase(3) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b3 And 128) <> 0 Then c0 = c0 Or 8
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b3 And 64) <> 0 Then c1 = c1 Or 8
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b3 And 32) <> 0 Then c2 = c2 Or 8
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b3 And 16) <> 0 Then c3 = c3 Or 8
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b3 And 8) <> 0 Then c4 = c4 Or 8
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b3 And 4) <> 0 Then c5 = c5 Or 8
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b3 And 2) <> 0 Then c6 = c6 Or 8
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-                If (b3 And 1) <> 0 Then c7 = c7 Or 8
-
-                Case 5
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-                b3 = planar(planeBase(3) + rowBase + xByte)
-                b4 = planar(planeBase(4) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b3 And 128) <> 0 Then c0 = c0 Or 8
-                If (b4 And 128) <> 0 Then c0 = c0 Or 16
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b3 And 64) <> 0 Then c1 = c1 Or 8
-                If (b4 And 64) <> 0 Then c1 = c1 Or 16
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b3 And 32) <> 0 Then c2 = c2 Or 8
-                If (b4 And 32) <> 0 Then c2 = c2 Or 16
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b3 And 16) <> 0 Then c3 = c3 Or 8
-                If (b4 And 16) <> 0 Then c3 = c3 Or 16
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b3 And 8) <> 0 Then c4 = c4 Or 8
-                If (b4 And 8) <> 0 Then c4 = c4 Or 16
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b3 And 4) <> 0 Then c5 = c5 Or 8
-                If (b4 And 4) <> 0 Then c5 = c5 Or 16
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b3 And 2) <> 0 Then c6 = c6 Or 8
-                If (b4 And 2) <> 0 Then c6 = c6 Or 16
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-                If (b3 And 1) <> 0 Then c7 = c7 Or 8
-                If (b4 And 1) <> 0 Then c7 = c7 Or 16
-
-                Case 6
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-                b3 = planar(planeBase(3) + rowBase + xByte)
-                b4 = planar(planeBase(4) + rowBase + xByte)
-                b5 = planar(planeBase(5) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b3 And 128) <> 0 Then c0 = c0 Or 8
-                If (b4 And 128) <> 0 Then c0 = c0 Or 16
-                If (b5 And 128) <> 0 Then c0 = c0 Or 32
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b3 And 64) <> 0 Then c1 = c1 Or 8
-                If (b4 And 64) <> 0 Then c1 = c1 Or 16
-                If (b5 And 64) <> 0 Then c1 = c1 Or 32
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b3 And 32) <> 0 Then c2 = c2 Or 8
-                If (b4 And 32) <> 0 Then c2 = c2 Or 16
-                If (b5 And 32) <> 0 Then c2 = c2 Or 32
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b3 And 16) <> 0 Then c3 = c3 Or 8
-                If (b4 And 16) <> 0 Then c3 = c3 Or 16
-                If (b5 And 16) <> 0 Then c3 = c3 Or 32
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b3 And 8) <> 0 Then c4 = c4 Or 8
-                If (b4 And 8) <> 0 Then c4 = c4 Or 16
-                If (b5 And 8) <> 0 Then c4 = c4 Or 32
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b3 And 4) <> 0 Then c5 = c5 Or 8
-                If (b4 And 4) <> 0 Then c5 = c5 Or 16
-                If (b5 And 4) <> 0 Then c5 = c5 Or 32
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b3 And 2) <> 0 Then c6 = c6 Or 8
-                If (b4 And 2) <> 0 Then c6 = c6 Or 16
-                If (b5 And 2) <> 0 Then c6 = c6 Or 32
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-                If (b3 And 1) <> 0 Then c7 = c7 Or 8
-                If (b4 And 1) <> 0 Then c7 = c7 Or 16
-                If (b5 And 1) <> 0 Then c7 = c7 Or 32
-
-                Case 7
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-                b3 = planar(planeBase(3) + rowBase + xByte)
-                b4 = planar(planeBase(4) + rowBase + xByte)
-                b5 = planar(planeBase(5) + rowBase + xByte)
-                b6 = planar(planeBase(6) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b3 And 128) <> 0 Then c0 = c0 Or 8
-                If (b4 And 128) <> 0 Then c0 = c0 Or 16
-                If (b5 And 128) <> 0 Then c0 = c0 Or 32
-                If (b6 And 128) <> 0 Then c0 = c0 Or 64
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b3 And 64) <> 0 Then c1 = c1 Or 8
-                If (b4 And 64) <> 0 Then c1 = c1 Or 16
-                If (b5 And 64) <> 0 Then c1 = c1 Or 32
-                If (b6 And 64) <> 0 Then c1 = c1 Or 64
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b3 And 32) <> 0 Then c2 = c2 Or 8
-                If (b4 And 32) <> 0 Then c2 = c2 Or 16
-                If (b5 And 32) <> 0 Then c2 = c2 Or 32
-                If (b6 And 32) <> 0 Then c2 = c2 Or 64
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b3 And 16) <> 0 Then c3 = c3 Or 8
-                If (b4 And 16) <> 0 Then c3 = c3 Or 16
-                If (b5 And 16) <> 0 Then c3 = c3 Or 32
-                If (b6 And 16) <> 0 Then c3 = c3 Or 64
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b3 And 8) <> 0 Then c4 = c4 Or 8
-                If (b4 And 8) <> 0 Then c4 = c4 Or 16
-                If (b5 And 8) <> 0 Then c4 = c4 Or 32
-                If (b6 And 8) <> 0 Then c4 = c4 Or 64
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b3 And 4) <> 0 Then c5 = c5 Or 8
-                If (b4 And 4) <> 0 Then c5 = c5 Or 16
-                If (b5 And 4) <> 0 Then c5 = c5 Or 32
-                If (b6 And 4) <> 0 Then c5 = c5 Or 64
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b3 And 2) <> 0 Then c6 = c6 Or 8
-                If (b4 And 2) <> 0 Then c6 = c6 Or 16
-                If (b5 And 2) <> 0 Then c6 = c6 Or 32
-                If (b6 And 2) <> 0 Then c6 = c6 Or 64
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-                If (b3 And 1) <> 0 Then c7 = c7 Or 8
-                If (b4 And 1) <> 0 Then c7 = c7 Or 16
-                If (b5 And 1) <> 0 Then c7 = c7 Or 32
-                If (b6 And 1) <> 0 Then c7 = c7 Or 64
-
-                Case 8
-                b0 = planar(planeBase(0) + rowBase + xByte)
-                b1 = planar(planeBase(1) + rowBase + xByte)
-                b2 = planar(planeBase(2) + rowBase + xByte)
-                b3 = planar(planeBase(3) + rowBase + xByte)
-                b4 = planar(planeBase(4) + rowBase + xByte)
-                b5 = planar(planeBase(5) + rowBase + xByte)
-                b6 = planar(planeBase(6) + rowBase + xByte)
-                b7 = planar(planeBase(7) + rowBase + xByte)
-
-                If (b0 And 128) <> 0 Then c0 = 1 Else c0 = 0
-                If (b1 And 128) <> 0 Then c0 = c0 Or 2
-                If (b2 And 128) <> 0 Then c0 = c0 Or 4
-                If (b3 And 128) <> 0 Then c0 = c0 Or 8
-                If (b4 And 128) <> 0 Then c0 = c0 Or 16
-                If (b5 And 128) <> 0 Then c0 = c0 Or 32
-                If (b6 And 128) <> 0 Then c0 = c0 Or 64
-                If (b7 And 128) <> 0 Then c0 = c0 Or 128
-                If (b0 And 64) <> 0 Then c1 = 1 Else c1 = 0
-                If (b1 And 64) <> 0 Then c1 = c1 Or 2
-                If (b2 And 64) <> 0 Then c1 = c1 Or 4
-                If (b3 And 64) <> 0 Then c1 = c1 Or 8
-                If (b4 And 64) <> 0 Then c1 = c1 Or 16
-                If (b5 And 64) <> 0 Then c1 = c1 Or 32
-                If (b6 And 64) <> 0 Then c1 = c1 Or 64
-                If (b7 And 64) <> 0 Then c1 = c1 Or 128
-                If (b0 And 32) <> 0 Then c2 = 1 Else c2 = 0
-                If (b1 And 32) <> 0 Then c2 = c2 Or 2
-                If (b2 And 32) <> 0 Then c2 = c2 Or 4
-                If (b3 And 32) <> 0 Then c2 = c2 Or 8
-                If (b4 And 32) <> 0 Then c2 = c2 Or 16
-                If (b5 And 32) <> 0 Then c2 = c2 Or 32
-                If (b6 And 32) <> 0 Then c2 = c2 Or 64
-                If (b7 And 32) <> 0 Then c2 = c2 Or 128
-                If (b0 And 16) <> 0 Then c3 = 1 Else c3 = 0
-                If (b1 And 16) <> 0 Then c3 = c3 Or 2
-                If (b2 And 16) <> 0 Then c3 = c3 Or 4
-                If (b3 And 16) <> 0 Then c3 = c3 Or 8
-                If (b4 And 16) <> 0 Then c3 = c3 Or 16
-                If (b5 And 16) <> 0 Then c3 = c3 Or 32
-                If (b6 And 16) <> 0 Then c3 = c3 Or 64
-                If (b7 And 16) <> 0 Then c3 = c3 Or 128
-                If (b0 And 8) <> 0 Then c4 = 1 Else c4 = 0
-                If (b1 And 8) <> 0 Then c4 = c4 Or 2
-                If (b2 And 8) <> 0 Then c4 = c4 Or 4
-                If (b3 And 8) <> 0 Then c4 = c4 Or 8
-                If (b4 And 8) <> 0 Then c4 = c4 Or 16
-                If (b5 And 8) <> 0 Then c4 = c4 Or 32
-                If (b6 And 8) <> 0 Then c4 = c4 Or 64
-                If (b7 And 8) <> 0 Then c4 = c4 Or 128
-                If (b0 And 4) <> 0 Then c5 = 1 Else c5 = 0
-                If (b1 And 4) <> 0 Then c5 = c5 Or 2
-                If (b2 And 4) <> 0 Then c5 = c5 Or 4
-                If (b3 And 4) <> 0 Then c5 = c5 Or 8
-                If (b4 And 4) <> 0 Then c5 = c5 Or 16
-                If (b5 And 4) <> 0 Then c5 = c5 Or 32
-                If (b6 And 4) <> 0 Then c5 = c5 Or 64
-                If (b7 And 4) <> 0 Then c5 = c5 Or 128
-                If (b0 And 2) <> 0 Then c6 = 1 Else c6 = 0
-                If (b1 And 2) <> 0 Then c6 = c6 Or 2
-                If (b2 And 2) <> 0 Then c6 = c6 Or 4
-                If (b3 And 2) <> 0 Then c6 = c6 Or 8
-                If (b4 And 2) <> 0 Then c6 = c6 Or 16
-                If (b5 And 2) <> 0 Then c6 = c6 Or 32
-                If (b6 And 2) <> 0 Then c6 = c6 Or 64
-                If (b7 And 2) <> 0 Then c6 = c6 Or 128
-                If (b0 And 1) <> 0 Then c7 = 1 Else c7 = 0
-                If (b1 And 1) <> 0 Then c7 = c7 Or 2
-                If (b2 And 1) <> 0 Then c7 = c7 Or 4
-                If (b3 And 1) <> 0 Then c7 = c7 Or 8
-                If (b4 And 1) <> 0 Then c7 = c7 Or 16
-                If (b5 And 1) <> 0 Then c7 = c7 Or 32
-                If (b6 And 1) <> 0 Then c7 = c7 Or 64
-                If (b7 And 1) <> 0 Then c7 = c7 Or 128
-
-                Case Else
-                    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
-                    ' The loop order matters because later statements expect the data to be visited sequentially.
-                    For p = 0 To anim.nPlanes - 1
-                        pb(p) = planar(planeBase(p) + rowBase + xByte)
-                    Next p
-
-                    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
-                    ' The loop order matters because later statements expect the data to be visited sequentially.
-                    For p = 0 To anim.nPlanes - 1
-                        bitValue = 2 ^ p
-                        If (pb(p) And 128) <> 0 Then c0 = c0 Or bitValue
-                        If (pb(p) And 64) <> 0 Then c1 = c1 Or bitValue
-                        If (pb(p) And 32) <> 0 Then c2 = c2 Or bitValue
-                        If (pb(p) And 16) <> 0 Then c3 = c3 Or bitValue
-                        If (pb(p) And 8) <> 0 Then c4 = c4 Or bitValue
-                        If (pb(p) And 4) <> 0 Then c5 = c5 Or bitValue
-                        If (pb(p) And 2) <> 0 Then c6 = c6 Or bitValue
-                        If (pb(p) And 1) <> 0 Then c7 = c7 Or bitValue
-                    Next p
-            End Select
-
-            amg_anim_scratch_pixels(baseX) = pal32(c0)
-            If baseX + 1 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 1) = pal32(c1)
-            If baseX + 2 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 2) = pal32(c2)
-            If baseX + 3 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 3) = pal32(c3)
-            If baseX + 4 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 4) = pal32(c4)
-            If baseX + 5 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 5) = pal32(c5)
-            If baseX + 6 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 6) = pal32(c6)
-            If baseX + 7 < rowPixelLimit Then amg_anim_scratch_pixels(baseX + 7) = pal32(c7)
+            baseX = baseX + 8
         Next xByte
+
+        If tailPixels > 0 Then
+            byteOfs = rowBase + fullByteCount
+            packLo = 0
+            packHi = 0
+
+            ' Loop purpose: merge the contribution from each active plane into the partial byte at row end.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                tableIndex = p * 256 + planar(planeBase(p) + byteOfs)
+                packLo = packLo Or amg_anim_plane_pack_lo(tableIndex)
+                packHi = packHi Or amg_anim_plane_pack_hi(tableIndex)
+            Next p
+
+            Select Case tailPixels
+                Case 7
+                    amg_anim_scratch_pixels(baseX + 6) = pal32((packHi \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 6
+                    amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 5
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 4
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 3
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 2
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 1
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+            End Select
+        End If
     Next y
 
-    frameMem = _MemImage(targetImg)
+    frameMem = AmgAnimCanvasMem(animId)
+    If _MemExists(frameMem) = 0 Then Exit Sub
     _MemPut frameMem, frameMem.OFFSET, amg_anim_scratch_pixels()
-    If _MemExists(frameMem) Then _MemFree frameMem
 End Sub
+
 
 
 ' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation build frame by number.
@@ -3706,10 +3571,13 @@ End Sub
 Sub AmgAnimCopyLocalPlanarToPool (src() As _Unsigned _Byte, dstStart As Long, byteCount As Long)
     ' Variable: i stores the general-purpose loop index.
     Dim i As Long
+
     If dstStart < 0 Then Exit Sub
     If byteCount <= 0 Then Exit Sub
-    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
-    ' The loop order matters because later statements expect the data to be visited sequentially.
+
+    ' _MemPut na celé pole tady není bezpečný, protože zapíše celý reálný rozměr src(),
+    ' ne jen byteCount bajtů. Když je src() větší než cílový výřez v poolu,
+    ' skončí to chybou "memory region out of range".
     For i = 0 To byteCount - 1
         amg_anim_planar_pool(dstStart + i) = src(i)
     Next i
@@ -3720,9 +3588,10 @@ End Sub
 Sub AmgAnimCopyPoolPlanarToLocal (srcStart As Long, byteCount As Long, dst() As _Unsigned _Byte)
     ' Variable: i stores the general-purpose loop index.
     Dim i As Long
+
     If byteCount <= 0 Then Exit Sub
-    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
-    ' The loop order matters because later statements expect the data to be visited sequentially.
+
+    ' Stejný důvod jako výše: _MemGet do celého pole dst() nectí byteCount.
     For i = 0 To byteCount - 1
         dst(i) = amg_anim_planar_pool(srcStart + i)
     Next i
@@ -3896,7 +3765,7 @@ Function AmgAnimPrepareBaseState% (animId As Long)
     Call AmgAnimUseSlotBuffer(animId)
     Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
     Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
-    Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_a())
+    Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
     Call AmgAnimSaveScratchWork(animId, pal())
 
     AmgAnimItems(animId).DecodedFrame = 0
@@ -3956,7 +3825,7 @@ Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
         Call AmgAnimGetFrameInfo(animId, 0, frame0)
         Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
         Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
-        Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_a())
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
         Call AmgAnimSaveScratchWork(animId, pal())
         AmgAnimItems(animId).DecodedFrame = 0
         AmgAnimItems(animId).ShownIsA = -1
@@ -4002,9 +3871,9 @@ Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
     End If
 
     If AmgAnimItems(animId).ShownIsA Then
-        Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_a())
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
     Else
-        Call AmgAnimRenderPlanarFrameMem(AmgAnimItems(animId).CanvasImage, anim, pal(), amg_anim_scratch_planar_b())
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_b())
     End If
 
     Call AmgAnimSaveScratchWork(animId, pal())

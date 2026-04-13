@@ -1,94 +1,95 @@
-$IF VERSION < 4.3.0 THEN
+Option _Explicit
+$If VERSION < 4.3.0 Then
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
-$END IF
+$End If
 
-$USELIBRARY:'Petr/AnimManager'
+$UseLibrary:'Petr/AnimManager'
 
 '--- Find the root of the program's source folder.
-DIM AS STRING sep, root, qbfo, filename, oldDir
+Dim As String sep, root, qbfo, filename, oldDir
 oldDir = _CWD$
-$IF WIN THEN
+$If WIN Then
     sep$ = "\"
-$ELSE
+$Else
     sep$ = "/"
-$END IF
-filename$ = MID$(COMMAND$(0), _INSTRREV(COMMAND$(0), sep$) + 1)
-filename$ = MID$(filename$, 1, LEN(filename$) - 4) + ".bas"
+$End If
+filename$ = Mid$(Command$(0), _InStrRev(Command$(0), sep$) + 1)
+filename$ = Mid$(filename$, 1, Len(filename$) - 4) + ".bas"
 
-IF _FILEEXISTS(filename$) THEN
+If _FileExists(filename$) Then
     root$ = ""
-ELSEIF _FILEEXISTS("qb64pe.exe") _ORELSE _FILEEXISTS("qb64pe") THEN
+ElseIf _FileExists("qb64pe.exe") _OrElse _FileExists("qb64pe") Then
     root$ = "libraries\examples\Petr\AnimManager\"
-    CHDIR root$
-ELSE
-    qbfo$ = _SELECTFOLDERDIALOG$("Please locate your QB64-PE main folder...")
-    IF LEN(qbfo$) > 0 _ANDALSO (_FILEEXISTS(qbfo$ + "\qb64pe.exe") _ORELSE _FILEEXISTS(qbfo$ + "\qb64pe")) THEN
+    ChDir root$
+Else
+    qbfo$ = _SelectFolderDialog$("Please locate your QB64-PE main folder...")
+    If Len(qbfo$) > 0 _AndAlso (_FileExists(qbfo$ + "\qb64pe.exe") _OrElse _FileExists(qbfo$ + "\qb64pe")) Then
         root$ = qbfo$ + "\libraries\examples\Petr\AnimManager\"
-    ELSE
-        PRINT
-        PRINT "ERROR: Can't locate the program's source folder, please run again"
-        PRINT "       and select your QB64-PE folder when ask for it."
-        END
-    END IF
-END IF
+    Else
+        Print
+        Print "ERROR: Can't locate the program's source folder, please run again"
+        Print "       and select your QB64-PE folder when ask for it."
+        End
+    End If
+End If
 '-----
 
 
 'need WebP support? Look here: https://github.com/QB64Petr/AnimManager/tree/Anim_manager_library_source
 
 ' Variable: screenImage stores the QB64 image handle used to store or draw decoded pixels.
-DIM screenImage AS LONG
+Dim screenImage As Long
 ' Array: fileNames stores the parallel array that remembers the source filename for each active entry.
-DIM fileNames(1 TO 4) AS STRING
+Dim fileNames(1 To 4) As String
 ' Array: animIds stores the working value for animation ids.
-DIM animIds(1 TO 4) AS LONG
+Dim animIds(1 To 4) As Long
 ' Array: posX stores the working value for pos x.
-DIM posX(1 TO 4) AS SINGLE
+Dim posX(1 To 4) As Single
 ' Array: posY stores the working value for pos y.
-DIM posY(1 TO 4) AS SINGLE
+Dim posY(1 To 4) As Single
 ' Array: velX stores the working value for vel x.
-DIM velX(1 TO 4) AS SINGLE
+Dim velX(1 To 4) As Single
 ' Array: velY stores the working value for vel y.
-DIM velY(1 TO 4) AS SINGLE
+Dim velY(1 To 4) As Single
 ' Array: drawW stores the working value for draw w.
-DIM drawW(1 TO 4) AS LONG
+Dim drawW(1 To 4) As Long
 ' Array: drawH stores the working value for draw h.
-DIM drawH(1 TO 4) AS LONG
+Dim drawH(1 To 4) As Long
 ' Variable: i stores the general-purpose loop index.
-DIM i AS LONG
+Dim i As Long
 ' Variable: keyCode stores the working value for key code.
-DIM keyCode AS LONG
+Dim keyCode As Long
 ' Variable: quitFlag stores the working value for quit flag.
-DIM quitFlag AS INTEGER
+Dim quitFlag As Integer
 ' Variable: screenW stores the working value for screen w.
-DIM screenW AS LONG
+Dim screenW As Long
 ' Variable: screenH stores the working value for screen h.
-DIM screenH AS LONG
+Dim screenH As Long
 ' Variable: labelY stores the working value for label y.
-DIM labelY AS LONG
+Dim labelY As Long
 
-fileNames(1) = "phoenix1.ani"
+fileNames(1) = "goku.anim"
 fileNames(2) = "valkyrie.anim"
-fileNames(3) = "Belinda.fli"
-fileNames(4) = "aaaa.gif"
+fileNames(3) = "PAP-Demo2.anim"
+fileNames(4) = "PAP-Demo1.anim"
 
 screenW = 1280
 screenH = 720
 
-screenImage = _NEWIMAGE(screenW, screenH, 32)
-SCREEN screenImage
-_TITLE "Anim manager demo 11 - bouncing windows"
+screenImage = _NewImage(screenW, screenH, 32)
+Screen screenImage
+_Title "Anim manager demo 11 - bouncing windows"
 
 
 ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
 ' The loop order matters because later statements expect the data to be visited sequentially.
-FOR i = 1 TO 4
+For i = 1 To 4
     animIds(i) = AnimOpen(fileNames(i))
-    IF animIds(i) >= 0 THEN
+    If animIds(i) >= 0 Then
         AnimSetLoop animIds(i), ANIM_LOOP_FOREVER
         AnimStart animIds(i)
-    END IF
-NEXT i
+    End If
+Next i
 
 posX(1) = 30: posY(1) = 80: velX(1) = 2.2: velY(1) = 1.4
 posX(2) = 420: posY(2) = 120: velX(2) = -1.7: velY(2) = 1.9
@@ -97,103 +98,103 @@ posX(4) = 900: posY(4) = 60: velX(4) = -2.0: velY(4) = 1.5
 
 ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
 ' The loop order matters because later statements expect the data to be visited sequentially.
-FOR i = 1 TO 4
+For i = 1 To 4
     drawW(i) = 260
     drawH(i) = 180
-NEXT i
+Next i
 
 ' Loop purpose: repeat this block until an internal exit condition decides that the current stage is complete.
-DO
-    keyCode = _KEYHIT
-    IF keyCode = 27 THEN quitFlag = -1
+Do
+    keyCode = _KeyHit
+    If keyCode = 27 Then quitFlag = -1
 
-    CLS , _RGB32(8, 10, 14)
-    _PRINTSTRING (20, 20), "Demo 11: bouncing animated windows in Anim manager"
-    _PRINTSTRING (20, 42), "Esc = end"
+    Cls , _RGB32(8, 10, 14)
+    _PrintString (20, 20), "Demo 11: bouncing animated windows in Anim manager"
+    _PrintString (20, 42), "Esc = end"
 
     ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
     ' The loop order matters because later statements expect the data to be visited sequentially.
-    FOR i = 1 TO 4
-        IF animIds(i) >= 0 THEN AnimUpdate animIds(i)
+    For i = 1 To 4
+        If animIds(i) >= 0 Then AnimUpdate animIds(i)
 
         posX(i) = posX(i) + velX(i)
         posY(i) = posY(i) + velY(i)
 
-        IF posX(i) < 10 THEN posX(i) = 10: velX(i) = -velX(i)
-        IF posY(i) < 70 THEN posY(i) = 70: velY(i) = -velY(i)
-        IF posX(i) + drawW(i) > screenW - 10 THEN posX(i) = screenW - 10 - drawW(i): velX(i) = -velX(i)
-        IF posY(i) + drawH(i) > screenH - 10 THEN posY(i) = screenH - 10 - drawH(i): velY(i) = -velY(i)
+        If posX(i) < 10 Then posX(i) = 10: velX(i) = -velX(i)
+        If posY(i) < 70 Then posY(i) = 70: velY(i) = -velY(i)
+        If posX(i) + drawW(i) > screenW - 10 Then posX(i) = screenW - 10 - drawW(i): velX(i) = -velX(i)
+        If posY(i) + drawH(i) > screenH - 10 Then posY(i) = screenH - 10 - drawH(i): velY(i) = -velY(i)
 
-        LINE (INT(posX(i)) - 2, INT(posY(i)) - 24)-(INT(posX(i)) + drawW(i) + 1, INT(posY(i)) + drawH(i) + 1), _RGB32(100, 130, 180), BF
-        LINE (INT(posX(i)) - 2, INT(posY(i)) - 24)-(INT(posX(i)) + drawW(i) + 1, INT(posY(i)) + drawH(i) + 1), _RGB32(255, 255, 255), B
-        _PRINTSTRING (INT(posX(i)) + 8, INT(posY(i)) - 18), fileNames(i)
+        Line (Int(posX(i)) - 2, Int(posY(i)) - 24)-(Int(posX(i)) + drawW(i) + 1, Int(posY(i)) + drawH(i) + 1), _RGB32(100, 130, 180), BF
+        Line (Int(posX(i)) - 2, Int(posY(i)) - 24)-(Int(posX(i)) + drawW(i) + 1, Int(posY(i)) + drawH(i) + 1), _RGB32(255, 255, 255), B
+        _PrintString (Int(posX(i)) + 8, Int(posY(i)) - 18), fileNames(i)
 
-        IF animIds(i) >= 0 THEN
-            DrawAnimFit animIds(i), INT(posX(i)), INT(posY(i)), drawW(i), drawH(i)
-        END IF
+        If animIds(i) >= 0 Then
+            DrawAnimFit animIds(i), Int(posX(i)), Int(posY(i)), drawW(i), drawH(i)
+        End If
 
-        labelY = INT(posY(i)) + drawH(i) + 6
-        IF animIds(i) >= 0 THEN
-            _PRINTSTRING (INT(posX(i)), labelY), "frame " + LTRIM$(STR$(AnimGetPos(animIds(i))))
-        END IF
-    NEXT i
+        labelY = Int(posY(i)) + drawH(i) + 6
+        If animIds(i) >= 0 Then
+            _PrintString (Int(posX(i)), labelY), "frame " + LTrim$(Str$(AnimGetPos(animIds(i))))
+        End If
+    Next i
 
-    _DISPLAY
-    _LIMIT 60
-LOOP UNTIL quitFlag
+    _Display
+    _Limit 60
+Loop Until quitFlag
 AnimFreeAll
-CHDIR oldDir
-END
+ChDir oldDir
+End
 
 ' Purpose: Routine for the demo program: handle draw animation fit.
 ' Parameters: animId = working value for animation id; boxX = working value for box x; boxY = working value for box y; boxW = working value for box w; boxH = working value for box h.
-SUB DrawAnimFit (animId AS LONG, boxX AS LONG, boxY AS LONG, boxW AS LONG, boxH AS LONG)
+Sub DrawAnimFit (animId As Long, boxX As Long, boxY As Long, boxW As Long, boxH As Long)
     ' Variable: srcW stores the working value for src w.
-    DIM srcW AS LONG
+    Dim srcW As Long
     ' Variable: srcH stores the working value for src h.
-    DIM srcH AS LONG
+    Dim srcH As Long
     ' Variable: drawW stores the working value for draw w.
-    DIM drawW AS LONG
+    Dim drawW As Long
     ' Variable: drawH stores the working value for draw h.
-    DIM drawH AS LONG
+    Dim drawH As Long
     ' Variable: drawX stores the working value for draw x.
-    DIM drawX AS LONG
+    Dim drawX As Long
     ' Variable: drawY stores the working value for draw y.
-    DIM drawY AS LONG
+    Dim drawY As Long
     ' Variable: scaleX stores the working value for scale x.
-    DIM scaleX AS DOUBLE
+    Dim scaleX As Double
     ' Variable: scaleY stores the working value for scale y.
-    DIM scaleY AS DOUBLE
+    Dim scaleY As Double
     ' Variable: scaleValue stores the working value for scale value.
-    DIM scaleValue AS DOUBLE
+    Dim scaleValue As Double
 
-    IF AnimValid(animId) = 0 THEN EXIT SUB
+    If AnimValid(animId) = 0 Then Exit Sub
 
     srcW = AnimWidth(animId)
     srcH = AnimHeight(animId)
-    IF srcW <= 0 OR srcH <= 0 THEN EXIT SUB
-    IF boxW <= 0 OR boxH <= 0 THEN EXIT SUB
+    If srcW <= 0 Or srcH <= 0 Then Exit Sub
+    If boxW <= 0 Or boxH <= 0 Then Exit Sub
 
     scaleX = boxW / srcW
     scaleY = boxH / srcH
 
-    IF scaleX < scaleY THEN
+    If scaleX < scaleY Then
         scaleValue = scaleX
-    ELSE
+    Else
         scaleValue = scaleY
-    END IF
+    End If
 
-    IF scaleValue <= 0 THEN EXIT SUB
+    If scaleValue <= 0 Then Exit Sub
 
-    drawW = CLNG(srcW * scaleValue)
-    drawH = CLNG(srcH * scaleValue)
-    IF drawW < 1 THEN drawW = 1
-    IF drawH < 1 THEN drawH = 1
+    drawW = CLng(srcW * scaleValue)
+    drawH = CLng(srcH * scaleValue)
+    If drawW < 1 Then drawW = 1
+    If drawH < 1 Then drawH = 1
 
     drawX = boxX + (boxW - drawW) \ 2
     drawY = boxY + (boxH - drawH) \ 2
 
     AnimDrawWindow drawX, drawY, drawX + drawW - 1, drawY + drawH - 1, animId
-END SUB
+End Sub
 
 

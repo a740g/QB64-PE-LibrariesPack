@@ -283,6 +283,9 @@ ReDim Shared AmgAnimFrames(0) As AmgAnimFrameInfo
 ReDim Shared AmgAnimFileNames(0) As String
 ' Shared dynamic array: AmgAnimErrorTexts is resized here to hold the text storage for the last human-readable error message.
 ReDim Shared AmgAnimErrorTexts(0) As String
+
+' Shared dynamic array: AmgAnimCanvasMem is resized here to hold one cached _MEM handle per live canvas image.
+ReDim Shared AmgAnimCanvasMem(0) As _MEM
 ' Shared variable: AmgAnimFrameCountUsed stores the total number of frames available for the current animation.
 Dim Shared AmgAnimFrameCountUsed As Long
 
@@ -341,6 +344,12 @@ Dim Shared amg_anim_scratch_chunky_size As Long
 Dim Shared amg_anim_scratch_pal_size As Long
 ' Shared variable: amg_anim_scratch_pixels_size stores the working value for Amiga animation scratch pixels size.
 Dim Shared amg_anim_scratch_pixels_size As Long
+' Shared dynamic array: amg_anim_plane_pack_lo stores packed 4-pixel contributions for planar-to-chunky rendering, low half.
+ReDim Shared amg_anim_plane_pack_lo(0) As _Unsigned Long
+' Shared dynamic array: amg_anim_plane_pack_hi stores packed 4-pixel contributions for planar-to-chunky rendering, high half.
+ReDim Shared amg_anim_plane_pack_hi(0) As _Unsigned Long
+' Shared variable: amg_anim_plane_pack_ready stores whether the planar render lookup tables were initialized.
+Dim Shared amg_anim_plane_pack_ready As Long
 
 ' Shared variable: amg_anim_active_mode stores the working value for Amiga animation active mode.
 Dim Shared amg_anim_active_mode As Long

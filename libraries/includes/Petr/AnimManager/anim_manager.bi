@@ -8,7 +8,7 @@ $END IF
 ' Commented source copy for the unified animation manager.
 ' Explanatory comments were added in English without altering executable code.
 ' =========================================================
-'$include: 'anim_amiga_anim_backend.bi'
+'$include: 'anim_amiga_anim_backend2b.bi'
 '$include: 'anim_ani_backend.bi'
 '$include: 'anim_apng_backend.bi'
 '$include: 'anim_flic_backend_buffered_faster.bi'

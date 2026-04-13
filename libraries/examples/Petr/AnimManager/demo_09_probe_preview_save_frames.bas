@@ -1,3 +1,4 @@
+OPTION _EXPLICIT
 $IF VERSION < 4.3.0 THEN
     $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
 $END IF
@@ -80,7 +81,7 @@ _TITLE "Demo 09 - probe, preview, save frame"
 selectedIndex = 1
 previewId = -1
 OpenSelectedPreview selectedIndex, previewId, fileName()
-
+DIM N AS LONG
 DO
     keyCode = _KEYHIT
     SELECT CASE keyCode
