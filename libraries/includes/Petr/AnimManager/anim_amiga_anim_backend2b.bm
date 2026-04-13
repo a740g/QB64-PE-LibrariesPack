@@ -1,0 +1,3888 @@
+$INCLUDEONCE
+
+$IF VERSION < 4.3.0 THEN
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$END IF
+
+' =========================================================
+' Commented source copy for the Amiga ANIM backend.
+' Explanatory comments were added in English without altering executable code.
+' =========================================================
+' Purpose: Open an Amiga ANIM/IFF file, parse ILBM-derived structures, and prepare playback.
+' Parameters: fileName = string holding a file path or a human-readable name.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimOpen& (fileName As String)
+    AmgAnimOpen = AmgAnimOpenLimit(fileName, 0, 0, 0)
+End Function
+
+' Purpose: Open an Amiga ANIM/IFF file, parse ILBM-derived structures, and prepare playback.
+' Parameters: fileName = string holding a file path or a human-readable name; maxWidth = maximum allowed width; maxHeight = maximum allowed height; maxFrames = maximum allowed frames.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long, maxFrames As Long)
+    ' Variable: anim stores the working value for animation.
+    Dim anim As AmgAnimInfo
+    ' dynamic array: frames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+    ReDim frames(0) As AmgAnimFrameInfo
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(0) As AmgAnimRGB8
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: slotId stores the working value for slot id.
+    Dim slotId As Long
+    ' Variable: frameStart stores the working value for frame start.
+    Dim frameStart As Long
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: imageHandle stores the QB64 image handle used to store or draw decoded pixels.
+    Dim imageHandle As Long
+    ' Variable: dataStart stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataStart As Long
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: totalChunky stores the working value for total chunky.
+    Dim totalChunky As Long
+    ' Variable: palCount stores the count used to size or iterate the current data set.
+    Dim palCount As Long
+    ' Variable: snapshotCount stores the count used to size or iterate the current data set.
+    Dim snapshotCount As Long
+
+    AmgAnimOpenLimit = -1
+    ok = 0
+    slotId = -1
+    imageHandle = -1
+    dataStart = -1
+
+    If _FileExists(fileName) = 0 Then Exit Function
+
+    dataStart = AmgAnimLoadFileToDataPool(fileName, ok)
+    If ok = 0 Then Exit Function
+    If dataStart < 0 Then Exit Function
+    amg_anim_active_mode = 1
+    amg_anim_active_pool_ofs = dataStart
+    amg_anim_active_pool_size = AmgAnimAllocDataBlockSize(dataStart)
+
+    AmgAnimLoadIndex anim, frames(), pal()
+    If anim.frameCount <= 0 Then Exit Function
+    If anim.w <= 0 Or anim.h <= 0 Then Exit Function
+
+    If maxWidth > 0 Then
+        If anim.w > maxWidth Then Exit Function
+    End If
+
+    If maxHeight > 0 Then
+        If anim.h > maxHeight Then Exit Function
+    End If
+
+    If maxFrames > 0 Then
+        If anim.frameCount > maxFrames Then Exit Function
+    End If
+
+    slotId = AmgAnimAllocSlot
+    If slotId < 0 Then Exit Function
+
+    AmgAnimInitSlot slotId
+    AmgAnimFileNames(slotId) = fileName
+    AmgAnimItems(slotId).Used = -1
+    AmgAnimItems(slotId).WidthPx = anim.w
+    AmgAnimItems(slotId).HeightPx = anim.h
+    AmgAnimItems(slotId).FrameCount = anim.frameCount
+    AmgAnimItems(slotId).CurrentFrame = 0
+    AmgAnimItems(slotId).LoopMode = AMG_ANIM_LOOP_FILE_DEFAULT
+    AmgAnimItems(slotId).NPlanes = anim.nPlanes
+    AmgAnimItems(slotId).RowBytes = anim.rowBytes
+    AmgAnimItems(slotId).PlaneSize = anim.planeSize
+    AmgAnimItems(slotId).Compression = anim.compression
+    AmgAnimItems(slotId).Camg = anim.camg
+    AmgAnimItems(slotId).IsHam = anim.isHAM
+    AmgAnimItems(slotId).RenderedFrame = -1
+    AmgAnimItems(slotId).DecodedFrame = -1
+    AmgAnimItems(slotId).ShownIsA = -1
+    AmgAnimItems(slotId).WorkReady = 0
+
+    frameStart = AmgAnimAppendFrameBlock(anim.frameCount)
+    If frameStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: frame pool allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For frameIndex = 0 To anim.frameCount - 1
+        AmgAnimFrames(frameStart + frameIndex) = frames(frameIndex)
+    Next frameIndex
+    AmgAnimItems(slotId).FrameStart = frameStart
+
+    AmgAnimItems(slotId).FileDataStart = dataStart
+    AmgAnimItems(slotId).FileDataSize = amg_anim_active_pool_size
+
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    totalChunky = anim.w * anim.h
+    palCount = UBound(pal) + 1
+    If totalPlanar <= 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: invalid planar size"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If totalChunky <= 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: invalid chunky size"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If palCount <= 0 Then palCount = 1
+
+    snapshotCount = AmgAnimCountSnapshots(anim.frameCount, AMG_ANIM_SNAPSHOT_INTERVAL)
+
+    AmgAnimItems(slotId).WorkBaseStart = AmgAnimAllocPlanarBlock(totalPlanar)
+    AmgAnimItems(slotId).WorkAStart = AmgAnimAllocPlanarBlock(totalPlanar)
+    AmgAnimItems(slotId).WorkBStart = AmgAnimAllocPlanarBlock(totalPlanar)
+    AmgAnimItems(slotId).ChunkyStart = AmgAnimAllocChunkyBlock(totalChunky)
+    AmgAnimItems(slotId).PixelsStart = -1
+    AmgAnimItems(slotId).PalStart = AmgAnimAllocPaletteBlock(palCount)
+    AmgAnimItems(slotId).PalCount = palCount
+    AmgAnimItems(slotId).SnapshotMetaStart = AmgAnimAllocSnapshotMetaBlock(snapshotCount)
+    AmgAnimItems(slotId).SnapshotCount = snapshotCount
+    AmgAnimItems(slotId).SnapshotInterval = AMG_ANIM_SNAPSHOT_INTERVAL
+    If snapshotCount > 0 Then
+        AmgAnimItems(slotId).SnapshotPlanarAStart = AmgAnimAllocPlanarBlock(snapshotCount * totalPlanar)
+        AmgAnimItems(slotId).SnapshotPlanarBStart = AmgAnimAllocPlanarBlock(snapshotCount * totalPlanar)
+        AmgAnimItems(slotId).SnapshotPaletteStart = AmgAnimAllocPaletteBlock(snapshotCount * palCount)
+    Else
+        AmgAnimItems(slotId).SnapshotPlanarAStart = -1
+        AmgAnimItems(slotId).SnapshotPlanarBStart = -1
+        AmgAnimItems(slotId).SnapshotPaletteStart = -1
+    End If
+
+    If AmgAnimItems(slotId).WorkBaseStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work base allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).WorkAStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work A allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).WorkBStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: work B allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).ChunkyStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: chunky allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).PalStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: palette allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If AmgAnimItems(slotId).SnapshotMetaStart < 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot meta allocation failed"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+    If snapshotCount > 0 Then
+        If AmgAnimItems(slotId).SnapshotPlanarAStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot planar A allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
+        If AmgAnimItems(slotId).SnapshotPlanarBStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot planar B allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
+        If AmgAnimItems(slotId).SnapshotPaletteStart < 0 Then
+            AmgAnimSetError slotId, "AmgAnimOpenLimit: snapshot palette allocation failed"
+            AmgAnimInitSlot slotId
+            Exit Function
+        End If
+    End If
+
+    AmgAnimCopyLocalPaletteToPool pal(), AmgAnimItems(slotId).PalStart, AmgAnimItems(slotId).PalCount
+
+    imageHandle = _NewImage(anim.w, anim.h, 32)
+    If imageHandle > -2 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: failed to allocate canvas"
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+
+    AmgAnimItems(slotId).CanvasImage = imageHandle
+    AmgAnimCanvasMem(slotId) = _MemImage(imageHandle)
+    If _MemExists(AmgAnimCanvasMem(slotId)) = 0 Then
+        AmgAnimSetError slotId, "AmgAnimOpenLimit: failed to map canvas memory"
+        If imageHandle <= -2 Then _FreeImage imageHandle: imageHandle = 0
+        AmgAnimItems(slotId).CanvasImage = 0
+        AmgAnimInitSlot slotId
+        Exit Function
+    End If
+
+    ' Delay first decode/render until the frame is actually requested.
+    ' This removes one expensive decode pass from open time.
+    AmgAnimItems(slotId).RenderedFrame = -1
+    AmgAnimOpenLimit = slotId
+End Function
+
+' Purpose: Read Amiga ANIM metadata without fully opening the animation.
+' Parameters: fileName = string holding a file path or a human-readable name; ok = success flag returned by the current routine; isAnim = Boolean-like flag used by the current routine; widthPx = decoded image width in pixels; heightPx = decoded image height in pixels; frameCount = total number of frames available for the current animation.
+Sub AmgAnimProbe (fileName As String, ok As Integer, isAnim As Integer, widthPx As Long, heightPx As Long, frameCount As Long)
+    ' Variable: anim stores the working value for animation.
+    Dim anim As AmgAnimInfo
+    ' dynamic array: frames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+    ReDim frames(0) As AmgAnimFrameInfo
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(0) As AmgAnimRGB8
+    ' Variable: okLong stores the working value for ok long.
+    Dim okLong As Long
+
+    ok = 0
+    isAnim = 0
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+    okLong = 0
+
+    If _FileExists(fileName) = 0 Then Exit Sub
+
+    AmgAnimLoadFileToBuffer fileName, okLong
+    If okLong = 0 Then Exit Sub
+    AmgAnimUseScratchBuffer
+
+    AmgAnimLoadIndex anim, frames(), pal()
+    If anim.frameCount <= 0 Then Exit Sub
+    If anim.w <= 0 Or anim.h <= 0 Then Exit Sub
+
+    ok = -1
+    isAnim = -1
+    widthPx = anim.w
+    heightPx = anim.h
+    frameCount = anim.frameCount
+End Sub
+
+' Purpose: Release all resources owned by one Amiga ANIM decoder instance.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimClose (animId As Long)
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If amg_anim_scratch_owner_valid Then
+        If amg_anim_scratch_owner = animId Then amg_anim_scratch_owner_valid = 0
+    End If
+    If _MemExists(AmgAnimCanvasMem(animId)) Then _MemFree AmgAnimCanvasMem(animId)
+    If AmgAnimItems(animId).CanvasImage <= -2 Then _FreeImage AmgAnimItems(animId).CanvasImage: AmgAnimItems(animId).CanvasImage = 0
+    AmgAnimInitSlot animId
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation free all.
+Sub AmgAnimFreeAll ()
+    ' Variable: indexValue stores the working value for index value.
+    Dim indexValue As Long
+
+    ' Loop purpose: walk through every currently allocated element in AmgAnimItems.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For indexValue = 0 To UBound(AmgAnimItems)
+        If AmgAnimItems(indexValue).Used Then AmgAnimClose indexValue
+    Next indexValue
+    amg_anim_scratch_owner_valid = 0
+End Sub
+
+' Purpose: Start Amiga ANIM playback timing.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimPlay (animId As Long)
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).FrameCount <= 0 Then Exit Sub
+    If AmgAnimEnsureFrameRendered(animId, AmgAnimItems(animId).CurrentFrame) = 0 Then Exit Sub
+
+    nowValue = Timer
+    delaySec = AmgAnimFrameDelaySec(animId, AmgAnimItems(animId).CurrentFrame)
+
+    AmgAnimItems(animId).Playing = -1
+    AmgAnimItems(animId).Paused = 0
+    AmgAnimItems(animId).RemainingDelay = 0
+    AmgAnimItems(animId).LastRawTimer = nowValue
+    AmgAnimItems(animId).NextTick = AmgAnimTimeAdd(nowValue, delaySec)
+End Sub
+
+' Purpose: Stop Amiga ANIM playback timing.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimStop (animId As Long)
+    ' Variable: renderResult stores the working value for render result.
+    Dim renderResult As Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+
+    AmgAnimItems(animId).Playing = 0
+    AmgAnimItems(animId).Paused = 0
+    AmgAnimItems(animId).CurrentFrame = 0
+    AmgAnimItems(animId).NextTick = 0
+    AmgAnimItems(animId).RemainingDelay = 0
+    AmgAnimItems(animId).LastRawTimer = 0
+    renderResult = AmgAnimEnsureFrameRendered(animId, 0)
+End Sub
+
+' Purpose: Pause Amiga ANIM playback while keeping the current frame.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimPause (animId As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).Playing = 0 Then Exit Sub
+    If AmgAnimItems(animId).Paused Then Exit Sub
+
+    nowValue = Timer
+    AmgAnimItems(animId).RemainingDelay = AmgAnimTimeRemaining(AmgAnimItems(animId).NextTick, nowValue)
+    AmgAnimItems(animId).Paused = -1
+    AmgAnimItems(animId).LastRawTimer = nowValue
+End Sub
+
+' Purpose: Resume Amiga ANIM playback after a pause.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimResume (animId As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).Playing = 0 Then Exit Sub
+    If AmgAnimItems(animId).Paused = 0 Then Exit Sub
+
+    nowValue = Timer
+    AmgAnimItems(animId).Paused = 0
+    AmgAnimItems(animId).LastRawTimer = nowValue
+    AmgAnimItems(animId).NextTick = AmgAnimTimeAdd(nowValue, AmgAnimItems(animId).RemainingDelay)
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation set loop.
+' Parameters: animId = working value for animation id; loopMode = loop policy that controls whether playback stops or repeats.
+Sub AmgAnimSetLoop (animId As Long, loopMode As Long)
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+
+    Select Case loopMode
+        Case AMG_ANIM_LOOP_FILE_DEFAULT, AMG_ANIM_LOOP_FOREVER, AMG_ANIM_LOOP_ONCE
+            AmgAnimItems(animId).LoopMode = loopMode
+        Case Else
+            AmgAnimItems(animId).LoopMode = AMG_ANIM_LOOP_FILE_DEFAULT
+    End Select
+End Sub
+
+' Purpose: Advance Amiga ANIM playback according to frame timing.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimUpdate (animId As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+    ' Variable: nextFrame stores the working value for next frame.
+    Dim nextFrame As Long
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: changed stores the working value for changed.
+    Dim changed As Integer
+    ' Variable: allowLoop stores the working value for allow loop.
+    Dim allowLoop As Integer
+    ' Variable: renderResult stores the working value for render result.
+    Dim renderResult As Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).Playing = 0 Then Exit Sub
+    If AmgAnimItems(animId).Paused Then Exit Sub
+    If AmgAnimItems(animId).FrameCount <= 1 Then Exit Sub
+
+    nowValue = Timer
+    changed = 0
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While AmgAnimTimeReached(AmgAnimItems(animId).NextTick, nowValue)
+        nextFrame = AmgAnimItems(animId).CurrentFrame + 1
+        If nextFrame >= AmgAnimItems(animId).FrameCount Then
+            allowLoop = 0
+            If AmgAnimItems(animId).LoopMode = AMG_ANIM_LOOP_FOREVER Then allowLoop = -1
+            If allowLoop = 0 Then
+                AmgAnimItems(animId).CurrentFrame = AmgAnimItems(animId).FrameCount - 1
+                AmgAnimItems(animId).Playing = 0
+                AmgAnimItems(animId).Paused = 0
+                AmgAnimItems(animId).NextTick = 0
+                Exit Do
+            End If
+            nextFrame = 0
+        End If
+
+        AmgAnimItems(animId).CurrentFrame = nextFrame
+        delaySec = AmgAnimFrameDelaySec(animId, nextFrame)
+        AmgAnimItems(animId).NextTick = AmgAnimTimeAdd(AmgAnimItems(animId).NextTick, delaySec)
+        changed = -1
+    Loop
+
+    AmgAnimItems(animId).LastRawTimer = nowValue
+    If changed Then
+        renderResult = AmgAnimEnsureFrameRendered(animId, AmgAnimItems(animId).CurrentFrame)
+    End If
+End Sub
+
+' Purpose: Draw the current Amiga ANIM frame to the active QB64 target.
+' Parameters: animId = working value for animation id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index.
+Sub AmgAnimDraw (animId As Long, x As Long, y As Long)
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimEnsureFrameRendered(animId, AmgAnimItems(animId).CurrentFrame) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    _PutImage (x, y), AmgAnimItems(animId).CanvasImage, 0
+End Sub
+
+' Purpose: Draw the current Amiga ANIM frame to the active QB64 target.
+' Parameters: animId = working value for animation id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index; boxWidth = width value used by this routine; boxHeight = height value used by this routine.
+Sub AmgAnimDrawFit (animId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    ' Variable: srcWidth stores the width value used by this routine.
+    Dim srcWidth As Long
+    ' Variable: srcHeight stores the height value used by this routine.
+    Dim srcHeight As Long
+    ' Variable: scaleX stores the working value for scale x.
+    Dim scaleX As Double
+    ' Variable: scaleY stores the working value for scale y.
+    Dim scaleY As Double
+    ' Variable: scaleValue stores the working value for scale value.
+    Dim scaleValue As Double
+    ' Variable: drawWidth stores the width value used by this routine.
+    Dim drawWidth As Long
+    ' Variable: drawHeight stores the height value used by this routine.
+    Dim drawHeight As Long
+    ' Variable: drawX stores the working value for draw x.
+    Dim drawX As Long
+    ' Variable: drawY stores the working value for draw y.
+    Dim drawY As Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If AmgAnimEnsureFrameRendered(animId, AmgAnimItems(animId).CurrentFrame) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+
+    srcWidth = AmgAnimItems(animId).WidthPx
+    srcHeight = AmgAnimItems(animId).HeightPx
+    If srcWidth <= 0 Or srcHeight <= 0 Then Exit Sub
+
+    scaleX = boxWidth / srcWidth
+    scaleY = boxHeight / srcHeight
+    If scaleX < scaleY Then
+        scaleValue = scaleX
+    Else
+        scaleValue = scaleY
+    End If
+    If scaleValue <= 0 Then Exit Sub
+
+    drawWidth = _Round(srcWidth * scaleValue)
+    drawHeight = _Round(srcHeight * scaleValue)
+    If drawWidth < 1 Then drawWidth = 1
+    If drawHeight < 1 Then drawHeight = 1
+
+    drawX = x + (boxWidth - drawWidth) \ 2
+    drawY = y + (boxHeight - drawHeight) \ 2
+    _PutImage (drawX, drawY)-(drawX + drawWidth - 1, drawY + drawHeight - 1), AmgAnimItems(animId).CanvasImage, 0
+End Sub
+
+' Purpose: Draw the current Amiga ANIM frame to the active QB64 target.
+' Parameters: animId = working value for animation id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index; boxWidth = width value used by this routine; boxHeight = height value used by this routine.
+Sub AmgAnimDrawStretch (animId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If AmgAnimEnsureFrameRendered(animId, AmgAnimItems(animId).CurrentFrame) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    _PutImage (x, y)-(x + boxWidth - 1, y + boxHeight - 1), AmgAnimItems(animId).CanvasImage, 0
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation frame count.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimFrameCount& (animId As Long)
+    AmgAnimFrameCount = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimFrameCount = AmgAnimItems(animId).FrameCount
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation width.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimWidth& (animId As Long)
+    AmgAnimWidth = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimWidth = AmgAnimItems(animId).WidthPx
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation height.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimHeight& (animId As Long)
+    AmgAnimHeight = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimHeight = AmgAnimItems(animId).HeightPx
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation current frame.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimCurrentFrame& (animId As Long)
+    AmgAnimCurrentFrame = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimCurrentFrame = AmgAnimItems(animId).CurrentFrame
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation format.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimFormat& (animId As Long)
+    AmgAnimFormat = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimFormat = AMG_ANIM_FMT_ANIM
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation is playing.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimIsPlaying% (animId As Long)
+    AmgAnimIsPlaying = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    AmgAnimIsPlaying = AmgAnimItems(animId).Playing
+End Function
+
+' Purpose: Seek to a specific Amiga ANIM frame or time position.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimSeekFrame% (animId As Long, frameIndex As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+
+    AmgAnimSeekFrame = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= AmgAnimItems(animId).FrameCount Then Exit Function
+
+    If AmgAnimEnsureFrameRendered(animId, frameIndex) = 0 Then Exit Function
+
+    delaySec = AmgAnimFrameDelaySec(animId, frameIndex)
+    If delaySec <= 0 Then delaySec = 1# / 60#
+
+    nowValue = Timer
+    AmgAnimItems(animId).CurrentFrame = frameIndex
+
+    If AmgAnimItems(animId).Playing Then
+        If AmgAnimItems(animId).Paused Then
+            AmgAnimItems(animId).RemainingDelay = delaySec
+            AmgAnimItems(animId).LastRawTimer = nowValue
+        Else
+            AmgAnimItems(animId).LastRawTimer = nowValue
+            AmgAnimItems(animId).NextTick = AmgAnimTimeAdd(nowValue, delaySec)
+            AmgAnimItems(animId).RemainingDelay = 0
+        End If
+    Else
+        AmgAnimItems(animId).NextTick = 0
+        AmgAnimItems(animId).RemainingDelay = 0
+        AmgAnimItems(animId).LastRawTimer = 0
+    End If
+
+    AmgAnimSeekFrame = -1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation is loaded.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimIsLoaded% (animId As Long)
+    AmgAnimIsLoaded = AmgAnimValidId(animId)
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation error.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimError$ (animId As Long)
+    AmgAnimError = ""
+    If animId < 0 Then Exit Function
+    If animId > UBound(AmgAnimErrorTexts) Then Exit Function
+    AmgAnimError = AmgAnimErrorTexts(animId)
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation save frame.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item; fileName = string holding a file path or a human-readable name.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimSaveFrame% (animId As Long, frameIndex As Long, fileName As String)
+    ' Variable: imageHandle stores the QB64 image handle used to store or draw decoded pixels.
+    Dim imageHandle As Long
+
+    AmgAnimSaveFrame = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= AmgAnimItems(animId).FrameCount Then Exit Function
+    If Len(fileName) = 0 Then Exit Function
+
+    imageHandle = AmgAnimExtractFrameImageInternal(animId, frameIndex)
+    If imageHandle > -2 Then Exit Function
+
+    _SaveImage fileName, imageHandle
+    If imageHandle <= -2 Then _FreeImage imageHandle: imageHandle = 0
+    AmgAnimSaveFrame = -1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation clone frame image.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimCloneFrameImage& (animId As Long, frameIndex As Long)
+    AmgAnimCloneFrameImage = -1
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= AmgAnimItems(animId).FrameCount Then Exit Function
+    AmgAnimCloneFrameImage = AmgAnimExtractFrameImageInternal(animId, frameIndex)
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc slot.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocSlot& ()
+    ' Variable: indexValue stores the working value for index value.
+    Dim indexValue As Long
+    ' Variable: oldTop stores the working value for old top.
+    Dim oldTop As Long
+
+    AmgAnimAllocSlot = -1
+
+    ' Loop purpose: walk through every currently allocated element in AmgAnimItems.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For indexValue = 0 To UBound(AmgAnimItems)
+        If AmgAnimItems(indexValue).Used = 0 Then
+            AmgAnimAllocSlot = indexValue
+            Exit Function
+        End If
+    Next indexValue
+
+    oldTop = UBound(AmgAnimItems)
+    ' dynamic array: AmgAnimItems is resized here to hold the dynamic table that stores one record per live object handled by this module.
+    ReDim _Preserve AmgAnimItems(oldTop + 1) As AmgAnimStore
+    ' dynamic array: AmgAnimFileNames is resized here to hold the parallel array that remembers the source filename for each active entry.
+    ReDim _Preserve AmgAnimFileNames(oldTop + 1) As String
+    ' dynamic array: AmgAnimErrorTexts is resized here to hold the text storage for the last human-readable error message.
+    ReDim _Preserve AmgAnimErrorTexts(oldTop + 1) As String
+    ReDim _Preserve AmgAnimCanvasMem(oldTop + 1) As _MEM
+    AmgAnimAllocSlot = oldTop + 1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation init slot.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimInitSlot (animId As Long)
+    If animId < 0 Then Exit Sub
+    If animId > UBound(AmgAnimItems) Then Exit Sub
+
+    If amg_anim_scratch_owner_valid Then
+        If amg_anim_scratch_owner = animId Then amg_anim_scratch_owner_valid = 0
+    End If
+
+    AmgAnimItems(animId).Used = 0
+    AmgAnimItems(animId).WidthPx = 0
+    AmgAnimItems(animId).HeightPx = 0
+    AmgAnimItems(animId).FrameStart = 0
+    AmgAnimItems(animId).FrameCount = 0
+    AmgAnimItems(animId).CurrentFrame = 0
+    AmgAnimItems(animId).Playing = 0
+    AmgAnimItems(animId).Paused = 0
+    AmgAnimItems(animId).LoopMode = AMG_ANIM_LOOP_FILE_DEFAULT
+    AmgAnimItems(animId).NextTick = 0
+    AmgAnimItems(animId).RemainingDelay = 0
+    AmgAnimItems(animId).LastRawTimer = 0
+    If _MemExists(AmgAnimCanvasMem(animId)) Then _MemFree AmgAnimCanvasMem(animId)
+    If AmgAnimItems(animId).CanvasImage <= -2 Then _FreeImage AmgAnimItems(animId).CanvasImage: AmgAnimItems(animId).CanvasImage = 0
+    AmgAnimItems(animId).RenderedFrame = -1
+    AmgAnimItems(animId).DecodedFrame = -1
+    AmgAnimItems(animId).ShownIsA = -1
+    AmgAnimItems(animId).WorkReady = 0
+    AmgAnimItems(animId).FileDataStart = 0
+    AmgAnimItems(animId).FileDataSize = 0
+    AmgAnimItems(animId).NPlanes = 0
+    AmgAnimItems(animId).RowBytes = 0
+    AmgAnimItems(animId).PlaneSize = 0
+    AmgAnimItems(animId).Compression = 0
+    AmgAnimItems(animId).Camg = 0
+    AmgAnimItems(animId).IsHam = 0
+    AmgAnimItems(animId).PalCount = 0
+    AmgAnimItems(animId).PalStart = 0
+    AmgAnimItems(animId).WorkBaseStart = 0
+    AmgAnimItems(animId).WorkAStart = 0
+    AmgAnimItems(animId).WorkBStart = 0
+    AmgAnimItems(animId).ChunkyStart = 0
+    AmgAnimItems(animId).PixelsStart = 0
+    AmgAnimItems(animId).SnapshotMetaStart = 0
+    AmgAnimItems(animId).SnapshotCount = 0
+    AmgAnimItems(animId).SnapshotInterval = 0
+    AmgAnimItems(animId).SnapshotPlanarAStart = 0
+    AmgAnimItems(animId).SnapshotPlanarBStart = 0
+    AmgAnimItems(animId).SnapshotPaletteStart = 0
+    AmgAnimFileNames(animId) = ""
+    AmgAnimErrorTexts(animId) = ""
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation set error.
+' Parameters: animId = working value for animation id; textValue = working value for text value.
+Sub AmgAnimSetError (animId As Long, textValue As String)
+    If animId < 0 Then Exit Sub
+    If animId > UBound(AmgAnimErrorTexts) Then Exit Sub
+    AmgAnimErrorTexts(animId) = textValue
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation append frame block.
+' Parameters: frameCount = total number of frames available for the current animation.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAppendFrameBlock& (frameCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAppendFrameBlock = -1
+    If frameCount <= 0 Then Exit Function
+
+    startIndex = AmgAnimFrameCountUsed
+    neededTop = startIndex + frameCount - 1
+
+    If neededTop > UBound(AmgAnimFrames) Then
+        ' dynamic array: AmgAnimFrames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+        ReDim _Preserve AmgAnimFrames(neededTop) As AmgAnimFrameInfo
+    End If
+
+    AmgAnimFrameCountUsed = startIndex + frameCount
+    AmgAnimAppendFrameBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation count snapshots.
+' Parameters: frameCount = total number of frames available for the current animation; intervalValue = working value for interval value.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimCountSnapshots& (frameCount As Long, intervalValue As Long)
+    If frameCount <= 0 Then
+        AmgAnimCountSnapshots = 0
+        Exit Function
+    End If
+    If intervalValue <= 0 Then intervalValue = 1
+    AmgAnimCountSnapshots = ((frameCount - 1) \ intervalValue) + 1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc snapshot meta block.
+' Parameters: snapshotCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocSnapshotMetaBlock& (snapshotCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+    ' Variable: indexValue stores the working value for index value.
+    Dim indexValue As Long
+
+    AmgAnimAllocSnapshotMetaBlock = -1
+    If snapshotCount <= 0 Then
+        AmgAnimAllocSnapshotMetaBlock = 0
+        Exit Function
+    End If
+
+    startIndex = AmgAnimSnapshotMetaUsed
+    neededTop = startIndex + snapshotCount - 1
+    If neededTop > UBound(AmgAnimSnapshotMeta) Then
+        ' dynamic array: AmgAnimSnapshotMeta is resized here to hold the working value for Amiga animation snapshot meta.
+        ReDim _Preserve AmgAnimSnapshotMeta(neededTop) As AmgAnimSnapshotStore
+    End If
+
+    ' Loop purpose: use indexValue as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For indexValue = 0 To snapshotCount - 1
+        AmgAnimSnapshotMeta(startIndex + indexValue).Used = 0
+        AmgAnimSnapshotMeta(startIndex + indexValue).FrameIndex = -1
+        AmgAnimSnapshotMeta(startIndex + indexValue).ShownIsA = -1
+    Next indexValue
+
+    AmgAnimSnapshotMetaUsed = startIndex + snapshotCount
+    AmgAnimAllocSnapshotMetaBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation snapshot slot index.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimSnapshotSlotIndex& (animId As Long, frameIndex As Long)
+    ' Variable: intervalValue stores the working value for interval value.
+    Dim intervalValue As Long
+    ' Variable: slotOffset stores the working value for slot offset.
+    Dim slotOffset As Long
+
+    AmgAnimSnapshotSlotIndex = -1
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    intervalValue = AmgAnimItems(animId).SnapshotInterval
+    If intervalValue <= 0 Then Exit Function
+    If frameIndex Mod intervalValue <> 0 Then Exit Function
+    slotOffset = frameIndex \ intervalValue
+    If slotOffset < 0 Then Exit Function
+    If slotOffset >= AmgAnimItems(animId).SnapshotCount Then Exit Function
+    AmgAnimSnapshotSlotIndex = AmgAnimItems(animId).SnapshotMetaStart + slotOffset
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation maybe store snapshot.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+Sub AmgAnimMaybeStoreSnapshot (animId As Long, frameIndex As Long)
+    ' Variable: snapshotSlot stores the slot number inside the module-wide storage arrays.
+    Dim snapshotSlot As Long
+    ' Variable: slotOffset stores the working value for slot offset.
+    Dim slotOffset As Long
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: paletteStart stores the palette storage or palette index used during indexed-color decoding.
+    Dim paletteStart As Long
+    ' Variable: planarAStart stores the working value for planar a start.
+    Dim planarAStart As Long
+    ' Variable: planarBStart stores the working value for planar b start.
+    Dim planarBStart As Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).SnapshotCount <= 0 Then Exit Sub
+    snapshotSlot = AmgAnimSnapshotSlotIndex(animId, frameIndex)
+    If snapshotSlot < 0 Then Exit Sub
+    If AmgAnimSnapshotMeta(snapshotSlot).Used Then Exit Sub
+
+    slotOffset = snapshotSlot - AmgAnimItems(animId).SnapshotMetaStart
+    totalPlanar = AmgAnimItems(animId).RowBytes * AmgAnimItems(animId).HeightPx * AmgAnimItems(animId).NPlanes
+    planarAStart = AmgAnimItems(animId).SnapshotPlanarAStart + slotOffset * totalPlanar
+    planarBStart = AmgAnimItems(animId).SnapshotPlanarBStart + slotOffset * totalPlanar
+    paletteStart = AmgAnimItems(animId).SnapshotPaletteStart + slotOffset * AmgAnimItems(animId).PalCount
+
+    Call AmgAnimCopyLocalPlanarToPool(amg_anim_scratch_planar_a(), planarAStart, totalPlanar)
+    Call AmgAnimCopyLocalPlanarToPool(amg_anim_scratch_planar_b(), planarBStart, totalPlanar)
+    Call AmgAnimCopyLocalPaletteToPool(amg_anim_scratch_pal(), paletteStart, AmgAnimItems(animId).PalCount)
+
+    AmgAnimSnapshotMeta(snapshotSlot).Used = -1
+    AmgAnimSnapshotMeta(snapshotSlot).FrameIndex = frameIndex
+    AmgAnimSnapshotMeta(snapshotSlot).ShownIsA = AmgAnimItems(animId).ShownIsA
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation restore nearest snapshot.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item; anim = working value for animation; pal = working value for pal; restoredFrame = working value for restored frame.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimRestoreNearestSnapshot% (animId As Long, frameIndex As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, restoredFrame As Long)
+    ' Variable: intervalValue stores the working value for interval value.
+    Dim intervalValue As Long
+    ' Variable: slotOffset stores the working value for slot offset.
+    Dim slotOffset As Long
+    ' Variable: snapshotSlot stores the slot number inside the module-wide storage arrays.
+    Dim snapshotSlot As Long
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: paletteStart stores the palette storage or palette index used during indexed-color decoding.
+    Dim paletteStart As Long
+    ' Variable: planarAStart stores the working value for planar a start.
+    Dim planarAStart As Long
+    ' Variable: planarBStart stores the working value for planar b start.
+    Dim planarBStart As Long
+
+    AmgAnimRestoreNearestSnapshot = 0
+    restoredFrame = -1
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If AmgAnimItems(animId).SnapshotCount <= 0 Then Exit Function
+
+    intervalValue = AmgAnimItems(animId).SnapshotInterval
+    If intervalValue <= 0 Then Exit Function
+
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    slotOffset = frameIndex \ intervalValue
+    If slotOffset >= AmgAnimItems(animId).SnapshotCount Then slotOffset = AmgAnimItems(animId).SnapshotCount - 1
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While slotOffset >= 0
+        snapshotSlot = AmgAnimItems(animId).SnapshotMetaStart + slotOffset
+        If AmgAnimSnapshotMeta(snapshotSlot).Used Then
+            planarAStart = AmgAnimItems(animId).SnapshotPlanarAStart + slotOffset * totalPlanar
+            planarBStart = AmgAnimItems(animId).SnapshotPlanarBStart + slotOffset * totalPlanar
+            paletteStart = AmgAnimItems(animId).SnapshotPaletteStart + slotOffset * AmgAnimItems(animId).PalCount
+
+            Call AmgAnimCopyPoolPlanarToLocal(planarAStart, totalPlanar, amg_anim_scratch_planar_a())
+            Call AmgAnimCopyPoolPlanarToLocal(planarBStart, totalPlanar, amg_anim_scratch_planar_b())
+            Call AmgAnimCopyPoolPaletteToLocal(paletteStart, AmgAnimItems(animId).PalCount, pal())
+            Call AmgAnimCopyLocalPaletteToScratch(pal())
+
+            amg_anim_scratch_owner = animId
+            amg_anim_scratch_owner_valid = -1
+            AmgAnimItems(animId).ShownIsA = AmgAnimSnapshotMeta(snapshotSlot).ShownIsA
+            AmgAnimItems(animId).DecodedFrame = AmgAnimSnapshotMeta(snapshotSlot).FrameIndex
+            AmgAnimItems(animId).WorkReady = -1
+            restoredFrame = AmgAnimItems(animId).DecodedFrame
+            AmgAnimRestoreNearestSnapshot = -1
+            Exit Function
+        End If
+        slotOffset = slotOffset - 1
+    Loop
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation valid id.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimValidId% (animId As Long)
+    AmgAnimValidId = 0
+    If animId < 0 Then Exit Function
+    If animId > UBound(AmgAnimItems) Then Exit Function
+    If AmgAnimItems(animId).Used = 0 Then Exit Function
+    If Len(AmgAnimFileNames(animId)) = 0 Then Exit Function
+    AmgAnimValidId = -1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation frame delay ticks.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimFrameDelayTicks& (animId As Long, frameIndex As Long)
+    ' Variable: delayTicks stores the frame delay or timing value.
+    Dim delayTicks As Long
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+
+    delayTicks = 0
+    frameSlot = AmgAnimItems(animId).FrameStart + frameIndex
+    If frameSlot >= 0 And frameSlot <= UBound(AmgAnimFrames) Then
+        If AmgAnimFrames(frameSlot).hasANHD Then
+            delayTicks = AmgAnimFrames(frameSlot).reltime
+        End If
+    End If
+
+    If delayTicks <= 0 Then
+        If frameIndex = 0 Then
+            delayTicks = AMG_ANIM_DEFAULT_FIRST_DELAY_TICKS
+        Else
+            delayTicks = 1
+        End If
+    End If
+
+    AmgAnimFrameDelayTicks = delayTicks
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation frame delay sec.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimFrameDelaySec# (animId As Long, frameIndex As Long)
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+
+    delaySec = AmgAnimFrameDelayTicks(animId, frameIndex) / 60#
+    delaySec = delaySec * 2 'too fast (specification says something else, but....)
+    If delaySec <= 0 Then delaySec = 1# / 60#
+    AmgAnimFrameDelaySec = delaySec
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation ensure frame rendered.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimEnsureFrameRendered% (animId As Long, frameIndex As Long)
+    AmgAnimEnsureFrameRendered = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= AmgAnimItems(animId).FrameCount Then Exit Function
+
+    If AmgAnimItems(animId).RenderedFrame = frameIndex Then
+        If AmgAnimItems(animId).CanvasImage <= -2 Then
+            AmgAnimEnsureFrameRendered = -1
+            Exit Function
+        End If
+    End If
+
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Function
+
+    If AmgAnimRenderFrameToCanvas(animId, frameIndex) = 0 Then
+        AmgAnimSetError animId, "AmgAnimEnsureFrameRendered: frame render failed"
+        Exit Function
+    End If
+
+    AmgAnimItems(animId).RenderedFrame = frameIndex
+    AmgAnimEnsureFrameRendered = -1
+End Function
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation time add.
+' Parameters: baseTime = time-related value used by the current routine; deltaSec = working value for delta sec.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+
+Function AmgAnimTimeAdd# (baseTime As Double, deltaSec As Double)
+    ' Variable: resultTime stores the time-related value used by the current routine.
+    Dim resultTime As Double
+
+    resultTime = baseTime + deltaSec
+    If resultTime >= 86400# Then resultTime = resultTime - 86400#
+
+    AmgAnimTimeAdd = resultTime
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation time reached.
+' Parameters: targetTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimTimeReached% (targetTime As Double, currentTime As Double)
+    AmgAnimTimeReached = 0
+
+    If Abs(currentTime - targetTime) < 43200# Then
+        If currentTime >= targetTime Then AmgAnimTimeReached = -1
+    Else
+        If currentTime < targetTime Then AmgAnimTimeReached = -1
+    End If
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation time remaining.
+' Parameters: targetTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimTimeRemaining# (targetTime As Double, currentTime As Double)
+    ' Variable: resultTime stores the time-related value used by the current routine.
+    Dim resultTime As Double
+
+    resultTime = targetTime - currentTime
+    If resultTime < 0 Then resultTime = resultTime + 86400#
+    If AmgAnimTimeReached(targetTime, currentTime) Then resultTime = 0
+
+    AmgAnimTimeRemaining = resultTime
+End Function
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc data block.
+' Parameters: byteCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocDataBlock& (byteCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAllocDataBlock = -1
+    If byteCount <= 0 Then Exit Function
+
+    startIndex = amg_anim_data_pool_used
+    neededTop = startIndex + byteCount - 1
+
+    If neededTop > UBound(amg_anim_data_pool) Then
+        ' dynamic array: amg_anim_data_pool is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+        ReDim _Preserve amg_anim_data_pool(neededTop) As _Unsigned _Byte
+    End If
+
+    amg_anim_data_pool_used = startIndex + byteCount
+    AmgAnimAllocDataBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy scratch to data pool.
+' Parameters: dstStart = working value for dst start; byteCount = count used to size or iterate the current data set.
+Sub AmgAnimCopyScratchToDataPool (dstStart As Long, byteCount As Long)
+    ' Variable: dataMem stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataMem As _MEM
+
+    If dstStart < 0 Then Exit Sub
+    If byteCount <= 0 Then Exit Sub
+    If byteCount > amg_anim_file_size Then Exit Sub
+
+    dataMem = _Mem(amg_anim_data_pool())
+    _MemPut dataMem, dataMem.OFFSET + dstStart, amg_anim_buf()
+    If _MemExists(dataMem) Then _MemFree dataMem
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation use scratch buffer.
+Sub AmgAnimUseScratchBuffer ()
+    amg_anim_active_mode = 0
+    amg_anim_active_pool_ofs = 0
+    amg_anim_active_pool_size = 0
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation use slot buffer.
+' Parameters: animId = working value for animation id.
+Sub AmgAnimUseSlotBuffer (animId As Long)
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+
+    amg_anim_active_mode = 1
+    amg_anim_active_pool_ofs = AmgAnimItems(animId).FileDataStart
+    amg_anim_active_pool_size = AmgAnimItems(animId).FileDataSize
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation active size.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimActiveSize& ()
+    If amg_anim_active_mode = 1 Then
+        AmgAnimActiveSize = amg_anim_active_pool_size
+    Else
+        AmgAnimActiveSize = amg_anim_file_size
+    End If
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation get active byte.
+' Parameters: ofs = current offset into packed or unpacked data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimGetActiveByte& (ofs As _Unsigned _Integer64)
+    AmgAnimGetActiveByte = 0
+
+    If amg_anim_active_mode = 1 Then
+        If amg_anim_active_pool_size <= 0 Then Exit Function
+        If ofs > amg_anim_active_pool_size - 1 Then Exit Function
+        AmgAnimGetActiveByte = amg_anim_data_pool(amg_anim_active_pool_ofs + ofs)
+    Else
+        If amg_anim_file_size <= 0 Then Exit Function
+        If ofs > amg_anim_file_size - 1 Then Exit Function
+        AmgAnimGetActiveByte = amg_anim_buf(ofs)
+    End If
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc data block size.
+' Parameters: dataStart = buffer that holds raw, packed, or decoded byte data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocDataBlockSize& (dataStart As Long)
+    ' Variable: dataTop stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataTop As Long
+
+    AmgAnimAllocDataBlockSize = 0
+    If dataStart < 0 Then Exit Function
+    dataTop = amg_anim_data_pool_used - 1
+    If dataStart > dataTop Then Exit Function
+    AmgAnimAllocDataBlockSize = dataTop - dataStart + 1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation load file to data pool.
+' Parameters: fileName = string holding a file path or a human-readable name; ok = success flag returned by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimLoadFileToDataPool& (fileName As String, ok As Long)
+    ' Variable: fh stores the working value for fh.
+    Dim fh As Long
+    ' Variable: fileLen stores the working value for file len.
+    Dim fileLen As Long
+    ' Variable: dataStart stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataStart As Long
+    ' Variable: chunkSize stores the size of the current chunk payload.
+    Dim chunkSize As Long
+    ' Variable: readPos stores the working value for read pos.
+    Dim readPos As Long
+    ' Variable: bytesLeft stores the working value for bytes left.
+    Dim bytesLeft As Long
+    ' Variable: writeOfs stores the working value for write ofs.
+    Dim writeOfs As Long
+    ' Variable: dataMem stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataMem As _MEM
+
+    ' dynamic array: ioBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim ioBuf(0) As _Unsigned _Byte
+    ' dynamic array: tailBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim tailBuf(0) As _Unsigned _Byte
+
+    ok = 0
+    AmgAnimLoadFileToDataPool = -1
+    If _FileExists(fileName) = 0 Then Exit Function
+
+    fh = FreeFile
+    Open fileName For Binary As #fh
+
+    fileLen = LOF(fh)
+    If fileLen <= 0 Then
+        Close #fh
+        Exit Function
+    End If
+
+    dataStart = AmgAnimAllocDataBlock(fileLen)
+    If dataStart < 0 Then
+        Close #fh
+        Exit Function
+    End If
+
+    chunkSize = 262144
+    If fileLen < chunkSize Then chunkSize = fileLen
+    ' dynamic array: ioBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim ioBuf(chunkSize - 1) As _Unsigned _Byte
+
+    dataMem = _Mem(amg_anim_data_pool())
+    readPos = 0
+    writeOfs = dataStart
+    bytesLeft = fileLen
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While bytesLeft >= chunkSize And chunkSize > 0
+        Get #fh, readPos + 1, ioBuf()
+        _MemPut dataMem, dataMem.OFFSET + writeOfs, ioBuf()
+        readPos = readPos + chunkSize
+        writeOfs = writeOfs + chunkSize
+        bytesLeft = bytesLeft - chunkSize
+    Loop
+
+    If bytesLeft > 0 Then
+        ' dynamic array: tailBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+        ReDim tailBuf(bytesLeft - 1) As _Unsigned _Byte
+        Get #fh, readPos + 1, tailBuf()
+        _MemPut dataMem, dataMem.OFFSET + writeOfs, tailBuf()
+    End If
+
+    If _MemExists(dataMem) Then _MemFree dataMem
+    Close #fh
+
+    AmgAnimLoadFileToDataPool = dataStart
+    ok = -1
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation load file to buffer.
+' Parameters: fileName = string holding a file path or a human-readable name; ok = success flag returned by the current routine.
+Sub AmgAnimLoadFileToBuffer (fileName As String, ok As Long)
+    ' Variable: fh stores the working value for fh.
+    Dim fh As Long
+    ' Variable: fileLen stores the working value for file len.
+    Dim fileLen As Long
+
+    ok = 0
+    If _FileExists(fileName) = 0 Then Exit Sub
+    fh = FreeFile
+    Open fileName For Binary As #fh
+
+    fileLen = LOF(fh)
+    If fileLen <= 0 Then
+        Close #fh
+'         Print "File is empty."
+        Exit Sub
+    End If
+
+    amg_anim_file_size = fileLen
+    ' dynamic array: amg_anim_buf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim amg_anim_buf(amg_anim_file_size - 1) As _Unsigned _Byte
+    Get #fh, 1, amg_anim_buf()
+    Close #fh
+
+    AmgAnimUseScratchBuffer
+    ok = -1
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation load index.
+' Parameters: anim = working value for animation; frames = dynamic array that stores per-frame data or cached frame metadata; pal = working value for pal.
+Sub AmgAnimLoadIndex (anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() As AmgAnimRGB8)
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: topId stores the working value for top id.
+    Dim topId As String
+    ' Variable: formSize stores the working value for form size.
+    Dim formSize As _Unsigned Long
+    ' Variable: formType stores the working value for form type.
+    Dim formType As String
+    ' Variable: formDataOfs stores the buffer that holds raw, packed, or decoded byte data.
+    Dim formDataOfs As _Unsigned _Integer64
+
+    bufOfs = 0
+    topId = AmgAnimReadIDFromBuf$(bufOfs)
+
+    If topId <> "FORM" Then
+'         Print "Not an IFF FORM."; topId
+        Exit Sub
+    End If
+
+    Call AmgAnimReadU32BE(bufOfs, formSize)
+    formType = AmgAnimReadIDFromBuf$(bufOfs)
+    formDataOfs = bufOfs
+
+    If formType <> "ANIM" Then
+'         Print "Not FORM ANIM."
+        Exit Sub
+    End If
+
+    ' Start with an empty frame array and grow it while scanning.
+    ' This avoids a full extra pass through the file just to count frames.
+    ReDim frames(0) As AmgAnimFrameInfo
+    Call AmgAnimScanAnimFormGrow(formDataOfs, formSize - 4, anim, frames(), pal())
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation scan animation form.
+' Parameters: formDataOfs = buffer that holds raw, packed, or decoded byte data; formSize = working value for form size; anim = working value for animation; frames = dynamic array that stores per-frame data or cached frame metadata; pal = working value for pal.
+Sub AmgAnimScanAnimFormGrow (formDataOfs As _Unsigned _Integer64, formSize As _Unsigned Long, anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() As AmgAnimRGB8)
+    ' Variable: formEnd stores the working value for form end.
+    Dim formEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: subPos stores the working value for sub pos.
+    Dim subPos As _Unsigned _Integer64
+    ' Variable: ck stores the working value for ck.
+    Dim ck As AmgAnimIffChunkInfo
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: subType stores the working value for sub type.
+    Dim subType As String
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: frameCapacity stores the current allocated frame capacity.
+    Dim frameCapacity As Long
+    ' Variable: newCapacity stores the next allocated frame capacity.
+    Dim newCapacity As Long
+
+    formEnd = formDataOfs + formSize
+    frameIndex = -1
+    frameCapacity = 0
+    bufOfs = formDataOfs
+
+    Do While bufOfs < formEnd
+        Call AmgAnimReadIffChunk(bufOfs, formEnd, ck, ok)
+        If ok = 0 Then Exit Do
+
+        If ck.id = "FORM" Then
+            subPos = ck.dataOfs
+            subType = AmgAnimReadIDFromBuf$(subPos)
+
+            If subType = "ILBM" Then
+                frameIndex = frameIndex + 1
+
+                If frameIndex > frameCapacity Then
+                    If frameCapacity <= 0 Then
+                        newCapacity = 15
+                    Else
+                        newCapacity = frameCapacity * 2 + 1
+                    End If
+                    ReDim _Preserve frames(newCapacity) As AmgAnimFrameInfo
+                    frameCapacity = newCapacity
+                End If
+
+                frames(frameIndex).fileOfs = ck.dataOfs - 8
+                frames(frameIndex).formSize = ck.size
+                Call AmgAnimScanIlbmFrame(ck.dataOfs + 4, ck.size - 4, frameIndex, anim, frames(frameIndex), pal())
+            End If
+        End If
+
+        bufOfs = ck.nextOfs
+    Loop
+
+    If frameIndex >= 0 Then
+        anim.frameCount = frameIndex + 1
+        If frameIndex < UBound(frames) Then
+            ReDim _Preserve frames(frameIndex) As AmgAnimFrameInfo
+        End If
+    Else
+        anim.frameCount = 0
+        ReDim frames(0) As AmgAnimFrameInfo
+    End If
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation count animation frames.
+' Parameters: formDataOfs = buffer that holds raw, packed, or decoded byte data; formSize = working value for form size.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimCountAnimFrames& (formDataOfs As _Unsigned _Integer64, formSize As _Unsigned Long)
+    ' Variable: formEnd stores the working value for form end.
+    Dim formEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: subPos stores the working value for sub pos.
+    Dim subPos As _Unsigned _Integer64
+    ' Variable: ck stores the working value for ck.
+    Dim ck As AmgAnimIffChunkInfo
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: subType stores the working value for sub type.
+    Dim subType As String
+    ' Variable: frameCount stores the total number of frames available for the current animation.
+    Dim frameCount As Long
+
+    frameCount = 0
+    formEnd = formDataOfs + formSize
+    bufOfs = formDataOfs
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While bufOfs < formEnd
+        Call AmgAnimReadIffChunk(bufOfs, formEnd, ck, ok)
+        If ok = 0 Then Exit Do
+
+        If ck.id = "FORM" Then
+            subPos = ck.dataOfs
+            subType = AmgAnimReadIDFromBuf$(subPos)
+            If subType = "ILBM" Then frameCount = frameCount + 1
+        End If
+
+        bufOfs = ck.nextOfs
+    Loop
+
+    AmgAnimCountAnimFrames = frameCount
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation scan animation form.
+' Parameters: formDataOfs = buffer that holds raw, packed, or decoded byte data; formSize = working value for form size; anim = working value for animation; frames = dynamic array that stores per-frame data or cached frame metadata; pal = working value for pal.
+Sub AmgAnimScanAnimForm (formDataOfs As _Unsigned _Integer64, formSize As _Unsigned Long, anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() As AmgAnimRGB8)
+    ' Variable: formEnd stores the working value for form end.
+    Dim formEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: subPos stores the working value for sub pos.
+    Dim subPos As _Unsigned _Integer64
+    ' Variable: ck stores the working value for ck.
+    Dim ck As AmgAnimIffChunkInfo
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: subType stores the working value for sub type.
+    Dim subType As String
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: frameTop stores the working value for frame top.
+    Dim frameTop As Long
+
+    formEnd = formDataOfs + formSize
+    frameIndex = -1
+    frameTop = UBound(frames)
+    bufOfs = formDataOfs
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While bufOfs < formEnd
+        Call AmgAnimReadIffChunk(bufOfs, formEnd, ck, ok)
+        If ok = 0 Then Exit Do
+
+        If ck.id = "FORM" Then
+            subPos = ck.dataOfs
+            subType = AmgAnimReadIDFromBuf$(subPos)
+
+            If subType = "ILBM" Then
+                If frameIndex < frameTop Then
+                    frameIndex = frameIndex + 1
+                    frames(frameIndex).fileOfs = ck.dataOfs - 8
+                    frames(frameIndex).formSize = ck.size
+
+                    Call AmgAnimScanIlbmFrame(ck.dataOfs + 4, ck.size - 4, frameIndex, anim, frames(frameIndex), pal())
+                End If
+            End If
+        End If
+
+        bufOfs = ck.nextOfs
+    Loop
+
+    If frameIndex >= 0 Then
+        anim.frameCount = frameIndex + 1
+    Else
+        anim.frameCount = 0
+    End If
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation scan ILBM frame.
+' Parameters: ilbmDataOfs = buffer that holds raw, packed, or decoded byte data; ilbmSize = working value for ILBM size; frameIndex = index variable used to address the current item; anim = working value for animation; frame = working value for frame; pal = working value for pal.
+Sub AmgAnimScanIlbmFrame (ilbmDataOfs As _Unsigned _Integer64, ilbmSize As _Unsigned Long, frameIndex As Long, anim As AmgAnimInfo, frame As AmgAnimFrameInfo, pal() As AmgAnimRGB8)
+    ' Variable: ilbmEnd stores the working value for ILBM end.
+    Dim ilbmEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: ck stores the working value for ck.
+    Dim ck As AmgAnimIffChunkInfo
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+    ' Variable: ilbm stores the working value for ILBM.
+    Dim ilbm As AmgAnimIlbmInfo
+    ' Variable: anhd stores the working value for anhd.
+    Dim anhd As AmgAnimAnhdInfo
+    ' Variable: okBmhd stores the working value for ok bmhd.
+    Dim okBmhd As Long
+    ' Variable: okAnhd stores the working value for ok anhd.
+    Dim okAnhd As Long
+
+    ilbmEnd = ilbmDataOfs + ilbmSize
+    bufOfs = ilbmDataOfs
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While bufOfs < ilbmEnd
+        Call AmgAnimReadIffChunk(bufOfs, ilbmEnd, ck, ok)
+        If ok = 0 Then Exit Do
+
+        Select Case ck.id
+            Case "BMHD"
+                frame.hasBMHD = -1
+                frame.bmhdOfs = ck.dataOfs
+
+                If frameIndex = 0 Then
+                    Call AmgAnimReadBMHDAt(ck.dataOfs, ilbm)
+                    Call AmgAnimValidateFirstFrameBMHD(ilbm, okBmhd)
+                    If okBmhd = 0 Then Exit Sub
+
+                    anim.w = ilbm.w
+                    anim.h = ilbm.h
+                    anim.nPlanes = ilbm.nPlanes
+                    anim.rowBytes = ilbm.rowBytes
+                    anim.planeSize = ilbm.planeSize
+                    anim.compression = ilbm.compression
+                    anim.firstFrameReady = -1
+                End If
+
+            Case "CMAP"
+                frame.hasCMAP = -1
+                frame.cmapOfs = ck.dataOfs
+                frame.cmapSize = ck.size
+
+                If frameIndex = 0 Then
+                    Call AmgAnimReadCMAPAt(ck.dataOfs, ck.size, pal())
+                End If
+
+            Case "CAMG"
+                If frameIndex = 0 Then
+                    Call AmgAnimReadCAMGAt(ck.dataOfs, anim.camg)
+                    If (anim.camg And &H800) <> 0 Then
+                        anim.isHAM = -1
+                    Else
+                        anim.isHAM = 0
+                    End If
+                End If
+
+            Case "BODY"
+                frame.hasBODY = -1
+                frame.bodyOfs = ck.dataOfs
+                frame.bodySize = ck.size
+
+            Case "ANHD"
+                frame.hasANHD = -1
+                frame.anhdOfs = ck.dataOfs
+                Call AmgAnimReadANHDAt(ck.dataOfs, anhd)
+                Call AmgAnimValidateFrameANHD(anhd, okAnhd)
+                If okAnhd = 0 Then Exit Sub
+
+                frame.opCode = anhd.operation
+                frame.reltime = anhd.reltime
+                frame.interleave = anhd.interleave
+                frame.anhdBits = anhd.bits
+
+            Case "DLTA"
+                frame.hasDLTA = -1
+                frame.dltaOfs = ck.dataOfs
+                frame.dltaSize = ck.size
+        End Select
+
+        bufOfs = ck.nextOfs
+    Loop
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation load first frame planar.
+' Parameters: anim = working value for animation; frame = working value for frame; planarBase = working value for planar base; planarWork = working value for planar work; pal = working value for pal.
+Sub AmgAnimLoadFirstFramePlanar (anim As AmgAnimInfo, frame As AmgAnimFrameInfo, planarBase() As _Unsigned _Byte, planarWork() As _Unsigned _Byte, pal() As AmgAnimRGB8)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+
+    If frame.hasBMHD = 0 Then
+'         Print "Frame 0 missing BMHD."
+        Exit Sub
+    End If
+
+    If frame.hasBODY = 0 And frame.hasDLTA = 0 Then
+'         Print "Frame 0 missing BODY or DLTA."
+        Exit Sub
+    End If
+
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+
+    If frame.hasCMAP Then
+        Call AmgAnimReadCMAPAt(frame.cmapOfs, frame.cmapSize, pal())
+    End If
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To totalPlanar - 1
+        planarBase(i) = 0
+    Next i
+
+    If frame.hasBODY Then
+        Call AmgAnimDecodeILBMBodyToPlanar(anim, frame.bodyOfs, frame.bodySize, anim.compression, planarBase())
+    ElseIf frame.hasDLTA And frame.opCode = 7 Then
+        Call AmgAnimApplyDLTAOp7(anim, frame.dltaOfs, frame.dltaSize, frame.anhdBits, planarBase())
+    Else
+'         Print "Frame 0 uses unsupported data layout."
+        Exit Sub
+    End If
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To totalPlanar - 1
+        planarWork(i) = planarBase(i)
+    Next
+End Sub
+
+
+' Purpose: Decode or apply Amiga ANIM delta/frame data to the current bitmap.
+' Parameters: anim = working value for animation; frame = working value for frame; shownPlanar = working value for shown planar; hiddenPlanar = working value for hidden planar; pal = working value for pal.
+Sub AmgAnimDecodeFrameToHidden (anim As AmgAnimInfo, frame As AmgAnimFrameInfo, hiddenPlanar() As _Unsigned _Byte, pal() As AmgAnimRGB8)
+    If frame.hasCMAP Then
+        Call AmgAnimReadCMAPAt(frame.cmapOfs, frame.cmapSize, pal())
+    End If
+
+    Select Case frame.opCode
+        Case 0
+            Call AmgAnimDecodeILBMBodyToPlanar(anim, frame.bodyOfs, frame.bodySize, anim.compression, hiddenPlanar())
+        Case 5
+            Call AmgAnimApplyDLTAOp5(anim, frame.dltaOfs, frame.dltaSize, hiddenPlanar())
+        Case 7
+            Call AmgAnimApplyDLTAOp7(anim, frame.dltaOfs, frame.dltaSize, frame.anhdBits, hiddenPlanar())
+        Case Else
+'             Print "Unsupported opCode:"; frame.opCode
+    End Select
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: ofs = current offset into packed or unpacked data; ilbm = working value for ILBM.
+Sub AmgAnimReadBMHDAt (ofs As _Unsigned _Integer64, ilbm As AmgAnimIlbmInfo)
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+
+    bufOfs = ofs
+
+    Call AmgAnimReadU16BE(bufOfs, ilbm.w)
+    Call AmgAnimReadU16BE(bufOfs, ilbm.h)
+    Call AmgAnimReadS16BE(bufOfs, ilbm.x)
+    Call AmgAnimReadS16BE(bufOfs, ilbm.y)
+
+    Call AmgAnimReadByte(bufOfs, b)
+    ilbm.nPlanes = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+    ilbm.masking = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+    ilbm.compression = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+
+    Call AmgAnimReadU16BE(bufOfs, ilbm.transparentColor)
+
+    Call AmgAnimReadByte(bufOfs, b)
+    ilbm.xAspect = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+    ilbm.yAspect = b
+
+    Call AmgAnimReadS16BE(bufOfs, ilbm.pageWidth)
+    Call AmgAnimReadS16BE(bufOfs, ilbm.pageHeight)
+
+    ilbm.rowBytes = ((ilbm.w + 15) \ 16) * 2
+    ilbm.planeSize = ilbm.rowBytes * ilbm.h
+    ilbm.hasBMHD = -1
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: ofs = current offset into packed or unpacked data; size = size value for the current block, buffer, or file; pal = working value for pal.
+Sub AmgAnimReadCMAPAt (ofs As _Unsigned _Integer64, size As _Unsigned Long, pal() As AmgAnimRGB8)
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: count stores the count used by the current routine.
+    Dim count As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+
+    count = size \ 3
+    If count <= 0 Then Exit Sub
+
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(count - 1) As AmgAnimRGB8
+    bufOfs = ofs
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To count - 1
+        Call AmgAnimReadByte(bufOfs, b)
+        pal(i).r = b
+
+        Call AmgAnimReadByte(bufOfs, b)
+        pal(i).g = b
+
+        Call AmgAnimReadByte(bufOfs, b)
+        pal(i).b = b
+    Next
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: ofs = current offset into packed or unpacked data; anhd = working value for anhd.
+Sub AmgAnimReadANHDAt (ofs As _Unsigned _Integer64, anhd As AmgAnimAnhdInfo)
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+
+    bufOfs = ofs
+
+    Call AmgAnimReadByte(bufOfs, b)
+    anhd.operation = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+    anhd.mask = b
+
+    Call AmgAnimReadU16BE(bufOfs, anhd.w)
+    Call AmgAnimReadU16BE(bufOfs, anhd.h)
+    Call AmgAnimReadS16BE(bufOfs, anhd.x)
+    Call AmgAnimReadS16BE(bufOfs, anhd.y)
+    Call AmgAnimReadU32BE(bufOfs, anhd.abstime)
+    Call AmgAnimReadU32BE(bufOfs, anhd.reltime)
+
+    Call AmgAnimReadByte(bufOfs, b)
+    anhd.interleave = b
+
+    Call AmgAnimReadByte(bufOfs, b)
+
+    Call AmgAnimReadU32BE(bufOfs, anhd.bits)
+
+    anhd.valid = -1
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: ofs = current offset into packed or unpacked data; camgValue = working value for camg value.
+Sub AmgAnimReadCAMGAt (ofs As _Unsigned _Integer64, camgValue As _Unsigned Long)
+    camgValue = 0
+
+    If AmgAnimActiveSize <= 0 Then Exit Sub
+    If ofs + 3 > AmgAnimActiveSize - 1 Then
+'         Print "CAMG chunk truncated."
+        Exit Sub
+    End If
+
+    Call AmgAnimReadU32BE(ofs, camgValue)
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation planar to chunky.
+' Parameters: anim = working value for animation; planar = working value for planar; chunky = working value for chunky.
+Sub AmgAnimPlanarToChunky (anim As AmgAnimInfo, planar() As _Unsigned _Byte, chunky() As _Unsigned _Byte)
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: xByte stores the working value for x byte.
+    Dim xByte As Long
+    ' Variable: p stores the generic pointer or position value.
+    Dim p As Long
+    ' Variable: rowBase stores the row pointer, row buffer, or row index used for image processing.
+    Dim rowBase As Long
+    ' Array: planeBase stores the working value for plane base.
+    Dim planeBase(7) As Long
+    ' Array: pb stores the working value for pb.
+    Dim pb(7) As _Unsigned _Byte
+    ' Variable: baseX stores the working value for base x.
+    Dim baseX As Long
+    ' Variable: rowPixelBase stores the row pointer, row buffer, or row index used for image processing.
+    Dim rowPixelBase As Long
+    ' Variable: rowPixelLimit stores the row pointer, row buffer, or row index used for image processing.
+    Dim rowPixelLimit As Long
+    ' Variable: color0 stores the column index or color-related value.
+    Dim color0 As Long
+    ' Variable: color1 stores the column index or color-related value.
+    Dim color1 As Long
+    ' Variable: color2 stores the column index or color-related value.
+    Dim color2 As Long
+    ' Variable: color3 stores the column index or color-related value.
+    Dim color3 As Long
+    ' Variable: color4 stores the column index or color-related value.
+    Dim color4 As Long
+    ' Variable: color5 stores the column index or color-related value.
+    Dim color5 As Long
+    ' Variable: color6 stores the column index or color-related value.
+    Dim color6 As Long
+    ' Variable: color7 stores the column index or color-related value.
+    Dim color7 As Long
+    ' Variable: bitValue stores the working value for bit value.
+    Dim bitValue As Long
+    ' Variable: b0 stores the working value for b 0.
+    Dim b0 As _Unsigned _Byte
+    ' Variable: b1 stores the working value for b 1.
+    Dim b1 As _Unsigned _Byte
+    ' Variable: b2 stores the working value for b 2.
+    Dim b2 As _Unsigned _Byte
+    ' Variable: b3 stores the working value for b 3.
+    Dim b3 As _Unsigned _Byte
+    ' Variable: b4 stores the working value for b 4.
+    Dim b4 As _Unsigned _Byte
+    ' Variable: b5 stores the working value for b 5.
+    Dim b5 As _Unsigned _Byte
+    ' Variable: b6 stores the working value for b 6.
+    Dim b6 As _Unsigned _Byte
+    ' Variable: b7 stores the working value for b 7.
+    Dim b7 As _Unsigned _Byte
+
+    If anim.nPlanes <= 0 Then Exit Sub
+    If anim.nPlanes > 8 Then Exit Sub
+
+    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For p = 0 To anim.nPlanes - 1
+        planeBase(p) = p * anim.planeSize
+    Next p
+
+    ' Loop purpose: iterate through image rows or vertical positions.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 0 To anim.h - 1
+        rowBase = y * anim.rowBytes
+        rowPixelBase = y * anim.w
+        rowPixelLimit = rowPixelBase + anim.w
+
+        ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For xByte = 0 To anim.rowBytes - 1
+            baseX = rowPixelBase + xByte * 8
+            If baseX >= rowPixelLimit Then Exit For
+
+            color0 = 0: color1 = 0: color2 = 0: color3 = 0
+            color4 = 0: color5 = 0: color6 = 0: color7 = 0
+
+            Select Case anim.nPlanes
+                Case 1
+                b0 = planar(planeBase(0) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+
+                Case 2
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+
+                Case 3
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+
+                Case 4
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+                b3 = planar(planeBase(3) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b3 And 128) <> 0 Then color0 = color0 Or 8
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b3 And 64) <> 0 Then color1 = color1 Or 8
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b3 And 32) <> 0 Then color2 = color2 Or 8
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b3 And 16) <> 0 Then color3 = color3 Or 8
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b3 And 8) <> 0 Then color4 = color4 Or 8
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b3 And 4) <> 0 Then color5 = color5 Or 8
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b3 And 2) <> 0 Then color6 = color6 Or 8
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+                If (b3 And 1) <> 0 Then color7 = color7 Or 8
+
+                Case 5
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+                b3 = planar(planeBase(3) + rowBase + xByte)
+                b4 = planar(planeBase(4) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b3 And 128) <> 0 Then color0 = color0 Or 8
+                If (b4 And 128) <> 0 Then color0 = color0 Or 16
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b3 And 64) <> 0 Then color1 = color1 Or 8
+                If (b4 And 64) <> 0 Then color1 = color1 Or 16
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b3 And 32) <> 0 Then color2 = color2 Or 8
+                If (b4 And 32) <> 0 Then color2 = color2 Or 16
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b3 And 16) <> 0 Then color3 = color3 Or 8
+                If (b4 And 16) <> 0 Then color3 = color3 Or 16
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b3 And 8) <> 0 Then color4 = color4 Or 8
+                If (b4 And 8) <> 0 Then color4 = color4 Or 16
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b3 And 4) <> 0 Then color5 = color5 Or 8
+                If (b4 And 4) <> 0 Then color5 = color5 Or 16
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b3 And 2) <> 0 Then color6 = color6 Or 8
+                If (b4 And 2) <> 0 Then color6 = color6 Or 16
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+                If (b3 And 1) <> 0 Then color7 = color7 Or 8
+                If (b4 And 1) <> 0 Then color7 = color7 Or 16
+
+                Case 6
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+                b3 = planar(planeBase(3) + rowBase + xByte)
+                b4 = planar(planeBase(4) + rowBase + xByte)
+                b5 = planar(planeBase(5) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b3 And 128) <> 0 Then color0 = color0 Or 8
+                If (b4 And 128) <> 0 Then color0 = color0 Or 16
+                If (b5 And 128) <> 0 Then color0 = color0 Or 32
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b3 And 64) <> 0 Then color1 = color1 Or 8
+                If (b4 And 64) <> 0 Then color1 = color1 Or 16
+                If (b5 And 64) <> 0 Then color1 = color1 Or 32
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b3 And 32) <> 0 Then color2 = color2 Or 8
+                If (b4 And 32) <> 0 Then color2 = color2 Or 16
+                If (b5 And 32) <> 0 Then color2 = color2 Or 32
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b3 And 16) <> 0 Then color3 = color3 Or 8
+                If (b4 And 16) <> 0 Then color3 = color3 Or 16
+                If (b5 And 16) <> 0 Then color3 = color3 Or 32
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b3 And 8) <> 0 Then color4 = color4 Or 8
+                If (b4 And 8) <> 0 Then color4 = color4 Or 16
+                If (b5 And 8) <> 0 Then color4 = color4 Or 32
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b3 And 4) <> 0 Then color5 = color5 Or 8
+                If (b4 And 4) <> 0 Then color5 = color5 Or 16
+                If (b5 And 4) <> 0 Then color5 = color5 Or 32
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b3 And 2) <> 0 Then color6 = color6 Or 8
+                If (b4 And 2) <> 0 Then color6 = color6 Or 16
+                If (b5 And 2) <> 0 Then color6 = color6 Or 32
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+                If (b3 And 1) <> 0 Then color7 = color7 Or 8
+                If (b4 And 1) <> 0 Then color7 = color7 Or 16
+                If (b5 And 1) <> 0 Then color7 = color7 Or 32
+
+                Case 7
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+                b3 = planar(planeBase(3) + rowBase + xByte)
+                b4 = planar(planeBase(4) + rowBase + xByte)
+                b5 = planar(planeBase(5) + rowBase + xByte)
+                b6 = planar(planeBase(6) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b3 And 128) <> 0 Then color0 = color0 Or 8
+                If (b4 And 128) <> 0 Then color0 = color0 Or 16
+                If (b5 And 128) <> 0 Then color0 = color0 Or 32
+                If (b6 And 128) <> 0 Then color0 = color0 Or 64
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b3 And 64) <> 0 Then color1 = color1 Or 8
+                If (b4 And 64) <> 0 Then color1 = color1 Or 16
+                If (b5 And 64) <> 0 Then color1 = color1 Or 32
+                If (b6 And 64) <> 0 Then color1 = color1 Or 64
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b3 And 32) <> 0 Then color2 = color2 Or 8
+                If (b4 And 32) <> 0 Then color2 = color2 Or 16
+                If (b5 And 32) <> 0 Then color2 = color2 Or 32
+                If (b6 And 32) <> 0 Then color2 = color2 Or 64
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b3 And 16) <> 0 Then color3 = color3 Or 8
+                If (b4 And 16) <> 0 Then color3 = color3 Or 16
+                If (b5 And 16) <> 0 Then color3 = color3 Or 32
+                If (b6 And 16) <> 0 Then color3 = color3 Or 64
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b3 And 8) <> 0 Then color4 = color4 Or 8
+                If (b4 And 8) <> 0 Then color4 = color4 Or 16
+                If (b5 And 8) <> 0 Then color4 = color4 Or 32
+                If (b6 And 8) <> 0 Then color4 = color4 Or 64
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b3 And 4) <> 0 Then color5 = color5 Or 8
+                If (b4 And 4) <> 0 Then color5 = color5 Or 16
+                If (b5 And 4) <> 0 Then color5 = color5 Or 32
+                If (b6 And 4) <> 0 Then color5 = color5 Or 64
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b3 And 2) <> 0 Then color6 = color6 Or 8
+                If (b4 And 2) <> 0 Then color6 = color6 Or 16
+                If (b5 And 2) <> 0 Then color6 = color6 Or 32
+                If (b6 And 2) <> 0 Then color6 = color6 Or 64
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+                If (b3 And 1) <> 0 Then color7 = color7 Or 8
+                If (b4 And 1) <> 0 Then color7 = color7 Or 16
+                If (b5 And 1) <> 0 Then color7 = color7 Or 32
+                If (b6 And 1) <> 0 Then color7 = color7 Or 64
+
+                Case 8
+                b0 = planar(planeBase(0) + rowBase + xByte)
+                b1 = planar(planeBase(1) + rowBase + xByte)
+                b2 = planar(planeBase(2) + rowBase + xByte)
+                b3 = planar(planeBase(3) + rowBase + xByte)
+                b4 = planar(planeBase(4) + rowBase + xByte)
+                b5 = planar(planeBase(5) + rowBase + xByte)
+                b6 = planar(planeBase(6) + rowBase + xByte)
+                b7 = planar(planeBase(7) + rowBase + xByte)
+
+                If (b0 And 128) <> 0 Then color0 = 1 Else color0 = 0
+                If (b1 And 128) <> 0 Then color0 = color0 Or 2
+                If (b2 And 128) <> 0 Then color0 = color0 Or 4
+                If (b3 And 128) <> 0 Then color0 = color0 Or 8
+                If (b4 And 128) <> 0 Then color0 = color0 Or 16
+                If (b5 And 128) <> 0 Then color0 = color0 Or 32
+                If (b6 And 128) <> 0 Then color0 = color0 Or 64
+                If (b7 And 128) <> 0 Then color0 = color0 Or 128
+                If (b0 And 64) <> 0 Then color1 = 1 Else color1 = 0
+                If (b1 And 64) <> 0 Then color1 = color1 Or 2
+                If (b2 And 64) <> 0 Then color1 = color1 Or 4
+                If (b3 And 64) <> 0 Then color1 = color1 Or 8
+                If (b4 And 64) <> 0 Then color1 = color1 Or 16
+                If (b5 And 64) <> 0 Then color1 = color1 Or 32
+                If (b6 And 64) <> 0 Then color1 = color1 Or 64
+                If (b7 And 64) <> 0 Then color1 = color1 Or 128
+                If (b0 And 32) <> 0 Then color2 = 1 Else color2 = 0
+                If (b1 And 32) <> 0 Then color2 = color2 Or 2
+                If (b2 And 32) <> 0 Then color2 = color2 Or 4
+                If (b3 And 32) <> 0 Then color2 = color2 Or 8
+                If (b4 And 32) <> 0 Then color2 = color2 Or 16
+                If (b5 And 32) <> 0 Then color2 = color2 Or 32
+                If (b6 And 32) <> 0 Then color2 = color2 Or 64
+                If (b7 And 32) <> 0 Then color2 = color2 Or 128
+                If (b0 And 16) <> 0 Then color3 = 1 Else color3 = 0
+                If (b1 And 16) <> 0 Then color3 = color3 Or 2
+                If (b2 And 16) <> 0 Then color3 = color3 Or 4
+                If (b3 And 16) <> 0 Then color3 = color3 Or 8
+                If (b4 And 16) <> 0 Then color3 = color3 Or 16
+                If (b5 And 16) <> 0 Then color3 = color3 Or 32
+                If (b6 And 16) <> 0 Then color3 = color3 Or 64
+                If (b7 And 16) <> 0 Then color3 = color3 Or 128
+                If (b0 And 8) <> 0 Then color4 = 1 Else color4 = 0
+                If (b1 And 8) <> 0 Then color4 = color4 Or 2
+                If (b2 And 8) <> 0 Then color4 = color4 Or 4
+                If (b3 And 8) <> 0 Then color4 = color4 Or 8
+                If (b4 And 8) <> 0 Then color4 = color4 Or 16
+                If (b5 And 8) <> 0 Then color4 = color4 Or 32
+                If (b6 And 8) <> 0 Then color4 = color4 Or 64
+                If (b7 And 8) <> 0 Then color4 = color4 Or 128
+                If (b0 And 4) <> 0 Then color5 = 1 Else color5 = 0
+                If (b1 And 4) <> 0 Then color5 = color5 Or 2
+                If (b2 And 4) <> 0 Then color5 = color5 Or 4
+                If (b3 And 4) <> 0 Then color5 = color5 Or 8
+                If (b4 And 4) <> 0 Then color5 = color5 Or 16
+                If (b5 And 4) <> 0 Then color5 = color5 Or 32
+                If (b6 And 4) <> 0 Then color5 = color5 Or 64
+                If (b7 And 4) <> 0 Then color5 = color5 Or 128
+                If (b0 And 2) <> 0 Then color6 = 1 Else color6 = 0
+                If (b1 And 2) <> 0 Then color6 = color6 Or 2
+                If (b2 And 2) <> 0 Then color6 = color6 Or 4
+                If (b3 And 2) <> 0 Then color6 = color6 Or 8
+                If (b4 And 2) <> 0 Then color6 = color6 Or 16
+                If (b5 And 2) <> 0 Then color6 = color6 Or 32
+                If (b6 And 2) <> 0 Then color6 = color6 Or 64
+                If (b7 And 2) <> 0 Then color6 = color6 Or 128
+                If (b0 And 1) <> 0 Then color7 = 1 Else color7 = 0
+                If (b1 And 1) <> 0 Then color7 = color7 Or 2
+                If (b2 And 1) <> 0 Then color7 = color7 Or 4
+                If (b3 And 1) <> 0 Then color7 = color7 Or 8
+                If (b4 And 1) <> 0 Then color7 = color7 Or 16
+                If (b5 And 1) <> 0 Then color7 = color7 Or 32
+                If (b6 And 1) <> 0 Then color7 = color7 Or 64
+                If (b7 And 1) <> 0 Then color7 = color7 Or 128
+
+                Case Else
+                    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+                    ' The loop order matters because later statements expect the data to be visited sequentially.
+                    For p = 0 To anim.nPlanes - 1
+                        pb(p) = planar(planeBase(p) + rowBase + xByte)
+                    Next p
+
+                    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+                    ' The loop order matters because later statements expect the data to be visited sequentially.
+                    For p = 0 To anim.nPlanes - 1
+                        bitValue = 2 ^ p
+                        If (pb(p) And 128) <> 0 Then color0 = color0 Or bitValue
+                        If (pb(p) And 64) <> 0 Then color1 = color1 Or bitValue
+                        If (pb(p) And 32) <> 0 Then color2 = color2 Or bitValue
+                        If (pb(p) And 16) <> 0 Then color3 = color3 Or bitValue
+                        If (pb(p) And 8) <> 0 Then color4 = color4 Or bitValue
+                        If (pb(p) And 4) <> 0 Then color5 = color5 Or bitValue
+                        If (pb(p) And 2) <> 0 Then color6 = color6 Or bitValue
+                        If (pb(p) And 1) <> 0 Then color7 = color7 Or bitValue
+                    Next p
+            End Select
+
+            chunky(baseX) = color0
+            If baseX + 1 < rowPixelLimit Then chunky(baseX + 1) = color1
+            If baseX + 2 < rowPixelLimit Then chunky(baseX + 2) = color2
+            If baseX + 3 < rowPixelLimit Then chunky(baseX + 3) = color3
+            If baseX + 4 < rowPixelLimit Then chunky(baseX + 4) = color4
+            If baseX + 5 < rowPixelLimit Then chunky(baseX + 5) = color5
+            If baseX + 6 < rowPixelLimit Then chunky(baseX + 6) = color6
+            If baseX + 7 < rowPixelLimit Then chunky(baseX + 7) = color7
+        Next xByte
+    Next y
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs; limitOfs = working value for limit ofs; ck = working value for ck; ok = success flag returned by the current routine.
+Sub AmgAnimReadIffChunk (bufOfs As _Unsigned _Integer64, limitOfs As _Unsigned _Integer64, ck As AmgAnimIffChunkInfo, ok As Long)
+    ' Variable: here stores the working value for here.
+    Dim here As _Unsigned _Integer64
+    ' Variable: sizeValue stores the working value for size value.
+    Dim sizeValue As _Unsigned Long
+
+    here = bufOfs
+
+    If here + 8 > limitOfs Or here + 8 > AmgAnimActiveSize Then
+        ok = 0
+        Exit Sub
+    End If
+
+    ck.id = AmgAnimReadIDFromBuf$(bufOfs)
+    Call AmgAnimReadU32BE(bufOfs, sizeValue)
+
+    ck.size = sizeValue
+    ck.dataOfs = bufOfs
+    ck.nextOfs = AmgAnimAlign2(ck.dataOfs + ck.size)
+
+    If ck.nextOfs > limitOfs Or ck.nextOfs > AmgAnimActiveSize Then
+        ok = 0
+        Exit Sub
+    End If
+
+    ok = -1
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs; value = working value for value.
+Sub AmgAnimReadByte (bufOfs As _Unsigned _Integer64, value As _Unsigned _Byte)
+    value = 0
+
+    If amg_anim_active_mode = 1 Then
+        If amg_anim_active_pool_size > 0 Then
+            If bufOfs <= amg_anim_active_pool_size - 1 Then
+                value = amg_anim_data_pool(amg_anim_active_pool_ofs + bufOfs)
+            End If
+        End If
+    Else
+        If amg_anim_file_size > 0 Then
+            If bufOfs <= amg_anim_file_size - 1 Then
+                value = amg_anim_buf(bufOfs)
+            End If
+        End If
+    End If
+
+    bufOfs = bufOfs + 1
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs; value = working value for value.
+Sub AmgAnimReadU16BE (bufOfs As _Unsigned _Integer64, value As Long)
+    ' Variable: b0 stores the working value for b 0.
+    Dim b0 As _Unsigned _Byte
+    ' Variable: b1 stores the working value for b 1.
+    Dim b1 As _Unsigned _Byte
+
+    Call AmgAnimReadByte(bufOfs, b0)
+    Call AmgAnimReadByte(bufOfs, b1)
+
+    value = b0 * 256 + b1
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs; value = working value for value.
+Sub AmgAnimReadS16BE (bufOfs As _Unsigned _Integer64, value As Long)
+    ' Variable: temp stores the temporary scratch value.
+    Dim temp As Long
+
+    Call AmgAnimReadU16BE(bufOfs, temp)
+
+    If temp >= 32768 Then
+        value = temp - 65536
+    Else
+        value = temp
+    End If
+End Sub
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs; value = working value for value.
+Sub AmgAnimReadU32BE (bufOfs As _Unsigned _Integer64, value As _Unsigned Long)
+    ' Variable: b0 stores the working value for b 0.
+    Dim b0 As _Unsigned _Byte
+    ' Variable: b1 stores the working value for b 1.
+    Dim b1 As _Unsigned _Byte
+    ' Variable: b2 stores the working value for b 2.
+    Dim b2 As _Unsigned _Byte
+    ' Variable: b3 stores the working value for b 3.
+    Dim b3 As _Unsigned _Byte
+
+    Call AmgAnimReadByte(bufOfs, b0)
+    Call AmgAnimReadByte(bufOfs, b1)
+    Call AmgAnimReadByte(bufOfs, b2)
+    Call AmgAnimReadByte(bufOfs, b3)
+
+    value = b0
+    value = value * 256 + b1
+    value = value * 256 + b2
+    value = value * 256 + b3
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation chunk data end.
+' Parameters: dataOfs = buffer that holds raw, packed, or decoded byte data; size = size value for the current block, buffer, or file.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimChunkDataEnd&& (dataOfs As _Unsigned _Integer64, size As _Unsigned Long)
+    AmgAnimChunkDataEnd&& = dataOfs + size
+End Function
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation align 2.
+' Parameters: value = working value for value.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAlign2&& (value As _Unsigned _Integer64)
+    If (value And 1) <> 0 Then
+        AmgAnimAlign2&& = value + 1
+    Else
+        AmgAnimAlign2&& = value
+    End If
+End Function
+
+
+' Purpose: Read IFF/ANIM chunks and build decoder state for the Amiga animation.
+' Parameters: bufOfs = working value for buf ofs.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimReadIDFromBuf$ (bufOfs As _Unsigned _Integer64)
+    ' Variable: result stores the working value for result.
+    Dim result As String
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+
+    result = Space$(4)
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 1 To 4
+        Call AmgAnimReadByte(bufOfs, b)
+        Mid$(result, i, 1) = Chr$(b)
+    Next i
+    AmgAnimReadIDFromBuf$ = result
+End Function
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation unpack byte run 1 row.
+' Parameters: bufOfs = working value for buf ofs; bodyEnd = working value for body end; rowBuf = buffer that holds raw, packed, or decoded byte data; rowLen = row pointer, row buffer, or row index used for image processing.
+Sub AmgAnimUnpackByteRun1Row (bufOfs As _Unsigned _Integer64, bodyEnd As _Unsigned _Integer64, rowBuf() As _Unsigned _Byte, rowLen As Long)
+    ' Variable: ctrl stores the working value for ctrl.
+    Dim ctrl As _Unsigned _Byte
+    ' Variable: literalCount stores the count used to size or iterate the current data set.
+    Dim literalCount As Long
+    ' Variable: repeatCount stores the count used to size or iterate the current data set.
+    Dim repeatCount As Long
+    ' Variable: dst stores the destination-side value or buffer reference.
+    Dim dst As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: valueByte stores the working value for value byte.
+    Dim valueByte As _Unsigned _Byte
+    ' Variable: storeCount stores the count used to size or iterate the current data set.
+    Dim storeCount As Long
+
+    dst = 0
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While dst < rowLen
+        If bufOfs >= bodyEnd Then Exit Do
+
+        Call AmgAnimReadByte(bufOfs, ctrl)
+
+        If ctrl <= 127 Then
+            literalCount = ctrl + 1
+            storeCount = literalCount
+            If dst + storeCount > rowLen Then
+                storeCount = rowLen - dst
+            End If
+
+            ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For i = 1 To literalCount
+                If bufOfs >= bodyEnd Then Exit For
+                Call AmgAnimReadByte(bufOfs, valueByte)
+                If i <= storeCount Then
+                    rowBuf(dst) = valueByte
+                    dst = dst + 1
+                End If
+            Next i
+
+        ElseIf ctrl = 128 Then
+            ' NOP
+
+        Else
+            repeatCount = 257 - ctrl
+            storeCount = repeatCount
+            If dst + storeCount > rowLen Then
+                storeCount = rowLen - dst
+            End If
+
+            If bufOfs >= bodyEnd Then Exit Do
+            Call AmgAnimReadByte(bufOfs, valueByte)
+
+            ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For i = 1 To storeCount
+                rowBuf(dst) = valueByte
+                dst = dst + 1
+            Next i
+        End If
+    Loop
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While dst < rowLen
+        rowBuf(dst) = 0
+        dst = dst + 1
+    Loop
+End Sub
+
+
+' Purpose: Decode or apply Amiga ANIM delta/frame data to the current bitmap.
+' Parameters: anim = working value for animation; bodyOfs = working value for body ofs; bodySize = working value for body size; compression = working value for compression; planar = working value for planar.
+Sub AmgAnimDecodeILBMBodyToPlanar (anim As AmgAnimInfo, bodyOfs As _Unsigned _Integer64, bodySize As _Unsigned Long, compression As Long, planar() As _Unsigned _Byte)
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: planeBase stores the working value for plane base.
+    Dim planeBase As Long
+    ' Variable: destOfs stores the working value for dest ofs.
+    Dim destOfs As Long
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: p stores the generic pointer or position value.
+    Dim p As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+    ' Variable: bodyEnd stores the working value for body end.
+    Dim bodyEnd As _Unsigned _Integer64
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: planarMem stores the memory handle or memory-related helper value.
+    Dim planarMem As _MEM
+    ' dynamic array: rowBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim rowBuf(0) As _Unsigned _Byte
+
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    bodyEnd = bodyOfs + bodySize
+    bufOfs = bodyOfs
+
+    If anim.rowBytes <= 0 Then Exit Sub
+    ' dynamic array: rowBuf is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim rowBuf(anim.rowBytes - 1) As _Unsigned _Byte
+
+    If compression = 0 Then
+        ' Loop purpose: iterate through image rows or vertical positions.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For y = 0 To anim.h - 1
+            ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                planeBase = p * anim.planeSize
+                destOfs = planeBase + y * anim.rowBytes
+
+                ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+                ' The loop order matters because later statements expect the data to be visited sequentially.
+                For i = 0 To anim.rowBytes - 1
+                    If bufOfs >= bodyEnd Then
+'                         Print "BODY ends too early."
+                        Exit Sub
+                    End If
+
+                    Call AmgAnimReadByte(bufOfs, b)
+                    planar(destOfs + i) = b
+                Next i
+            Next p
+        Next y
+
+    ElseIf compression = 1 Then
+        planarMem = _Mem(planar())
+
+        ' Loop purpose: iterate through image rows or vertical positions.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For y = 0 To anim.h - 1
+            ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                planeBase = p * anim.planeSize
+                destOfs = planeBase + y * anim.rowBytes
+
+                Call AmgAnimUnpackByteRun1Row(bufOfs, bodyEnd, rowBuf(), anim.rowBytes)
+                _MemPut planarMem, planarMem.OFFSET + destOfs, rowBuf()
+            Next p
+        Next y
+
+        If _MemExists(planarMem) Then _MemFree planarMem
+    Else
+'         Print "Unsupported BODY compression:"; compression
+    End If
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation validate first frame bmhd.
+' Parameters: ilbm = working value for ILBM; ok = success flag returned by the current routine.
+Sub AmgAnimValidateFirstFrameBMHD (ilbm As AmgAnimIlbmInfo, ok As Long)
+    ok = -1
+
+    If ilbm.w <= 0 Or ilbm.h <= 0 Then
+'         Print "Invalid BMHD size."
+        ok = 0
+        Exit Sub
+    End If
+
+    If ilbm.nPlanes < 1 Or ilbm.nPlanes > 8 Then
+'         Print "Only 1..8 bitplanes are supported."
+        ok = 0
+        Exit Sub
+    End If
+
+    If ilbm.masking <> 0 Then
+'         Print "Mask plane is not supported in this build."
+        ok = 0
+        Exit Sub
+    End If
+
+    If ilbm.compression <> 0 And ilbm.compression <> 1 Then
+'         Print "Only BODY compression 0 and 1 are supported."
+        ok = 0
+        Exit Sub
+    End If
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation validate frame anhd.
+' Parameters: anhd = working value for anhd; ok = success flag returned by the current routine.
+Sub AmgAnimValidateFrameANHD (anhd As AmgAnimAnhdInfo, ok As Long)
+    ok = -1
+
+    If anhd.valid = 0 Then
+'         Print "ANHD missing or invalid."
+        ok = 0
+        Exit Sub
+    End If
+
+    If anhd.operation <> 0 And anhd.operation <> 5 And anhd.operation <> 7 Then
+'         Print "Only ANHD operation 0, 5 and 7 are supported."
+        ok = 0
+        Exit Sub
+    End If
+
+    ' Real-world op5/op7 files may carry non-zero bits or interleave metadata.
+    ' Do not reject them during indexing.
+End Sub
+
+
+' Purpose: Decode or apply Amiga ANIM delta/frame data to the current bitmap.
+' Parameters: anim = working value for animation; dltaOfs = working value for dlta ofs; dltaSize = working value for dlta size; planar = working value for planar.
+Sub AmgAnimApplyDLTAOp5 (anim As AmgAnimInfo, dltaOfs As _Unsigned _Integer64, dltaSize As _Unsigned Long, planar() As _Unsigned _Byte)
+    ' Array: ptrTable stores the working value for ptr table.
+    Dim ptrTable(15) As _Unsigned Long
+    ' Variable: p stores the generic pointer or position value.
+    Dim p As Long
+    ' Variable: col stores the column index or color-related value.
+    Dim col As Long
+    ' Variable: opCount stores the count used to size or iterate the current data set.
+    Dim opCount As Long
+    ' Variable: opCode stores the working value for op code.
+    Dim opCode As Long
+    ' Variable: runCount stores the count used to size or iterate the current data set.
+    Dim runCount As Long
+    ' Variable: srcOfs stores the working value for src ofs.
+    Dim srcOfs As _Unsigned _Integer64
+    ' Variable: planeBase stores the working value for plane base.
+    Dim planeBase As Long
+    ' Variable: planeEnd stores the working value for plane end.
+    Dim planeEnd As Long
+    ' Variable: colEnd stores the column index or color-related value.
+    Dim colEnd As Long
+    ' Variable: dstOfs stores the working value for dst ofs.
+    Dim dstOfs As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+    ' Variable: valueByte stores the working value for value byte.
+    Dim valueByte As _Unsigned _Byte
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: dltaEnd stores the working value for dlta end.
+    Dim dltaEnd As _Unsigned _Integer64
+
+    dltaEnd = dltaOfs + dltaSize
+    bufOfs = dltaOfs
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 15
+        ptrTable(i) = 0
+    Next i
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 15
+        Call AmgAnimReadU32BE(bufOfs, ptrTable(i))
+    Next i
+
+    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For p = 0 To anim.nPlanes - 1
+        If ptrTable(p) <> 0 Then
+            srcOfs = dltaOfs + ptrTable(p)
+            If srcOfs >= dltaEnd Then
+'                 Print "DLTA op5 pointer outside chunk."
+                Exit Sub
+            End If
+
+            planeBase = p * anim.planeSize
+            planeEnd = planeBase + anim.planeSize
+            bufOfs = srcOfs
+
+            ' Loop purpose: iterate through image columns, pixels, or horizontal positions.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For col = 0 To anim.rowBytes - 1
+                Call AmgAnimReadByte(bufOfs, b)
+                opCount = b
+                dstOfs = planeBase + col
+                colEnd = planeEnd + col
+
+                ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+                ' The loop order matters because later statements expect the data to be visited sequentially.
+                For i = 1 To opCount
+                    Call AmgAnimReadByte(bufOfs, b)
+                    opCode = b
+
+                    If opCode = 0 Then
+                        Call AmgAnimReadByte(bufOfs, b)
+                        runCount = b
+                        Call AmgAnimReadByte(bufOfs, valueByte)
+
+                        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                        Do While runCount > 0
+                            If dstOfs < planeBase Or dstOfs >= planeEnd Then
+'                                 Print "DLTA op5 SAME overruns plane."
+                                Exit Sub
+                            End If
+
+                            planar(dstOfs) = valueByte
+                            dstOfs = dstOfs + anim.rowBytes
+                            runCount = runCount - 1
+                        Loop
+
+                    ElseIf (opCode And &H80) <> 0 Then
+                        runCount = opCode And &H7F
+
+                        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                        Do While runCount > 0
+                            If dstOfs < planeBase Or dstOfs >= planeEnd Then
+'                                 Print "DLTA op5 UNIQ overruns plane."
+                                Exit Sub
+                            End If
+
+                            Call AmgAnimReadByte(bufOfs, valueByte)
+                            planar(dstOfs) = valueByte
+                            dstOfs = dstOfs + anim.rowBytes
+                            runCount = runCount - 1
+                        Loop
+
+                    Else
+                        dstOfs = dstOfs + opCode * anim.rowBytes
+
+                        If dstOfs > colEnd Then
+'                             Print "DLTA op5 SKIP overruns plane column."
+                            Exit Sub
+                        End If
+                    End If
+                Next i
+            Next col
+        End If
+    Next p
+End Sub
+
+
+' Purpose: Decode or apply Amiga ANIM delta/frame data to the current bitmap.
+' Parameters: anim = working value for animation; dltaOfs = working value for dlta ofs; dltaSize = working value for dlta size; anhdBits = working value for anhd bits; planar = working value for planar.
+Sub AmgAnimApplyDLTAOp7 (anim As AmgAnimInfo, dltaOfs As _Unsigned _Integer64, dltaSize As _Unsigned Long, anhdBits As _Unsigned Long, planar() As _Unsigned _Byte)
+    ' Array: opPtrTable stores the working value for op ptr table.
+    Dim opPtrTable(7) As _Unsigned Long
+    ' Array: dataPtrTable stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataPtrTable(7) As _Unsigned Long
+    ' Variable: p stores the generic pointer or position value.
+    Dim p As Long
+    ' Variable: col stores the column index or color-related value.
+    Dim col As Long
+    ' Variable: colCount stores the column index or color-related value.
+    Dim colCount As Long
+    ' Variable: itemSize stores the working value for item size.
+    Dim itemSize As Long
+    ' Variable: opCount stores the count used to size or iterate the current data set.
+    Dim opCount As Long
+    ' Variable: opCode stores the working value for op code.
+    Dim opCode As Long
+    ' Variable: runCount stores the count used to size or iterate the current data set.
+    Dim runCount As Long
+    ' Variable: opListOfs stores the working value for op list ofs.
+    Dim opListOfs As _Unsigned _Integer64
+    ' Variable: dataListOfs stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataListOfs As _Unsigned _Integer64
+    ' Variable: planeBase stores the working value for plane base.
+    Dim planeBase As Long
+    ' Variable: planeEnd stores the working value for plane end.
+    Dim planeEnd As Long
+    ' Variable: dstOfs stores the working value for dst ofs.
+    Dim dstOfs As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: j stores the secondary loop index.
+    Dim j As Long
+    ' Variable: b stores the color component or packed color helper used during image conversion.
+    Dim b As _Unsigned _Byte
+    ' Array: valueBytes stores the working value for value bytes.
+    Dim valueBytes(3) As _Unsigned _Byte
+    ' Variable: bufOfs stores the working value for buf ofs.
+    Dim bufOfs As _Unsigned _Integer64
+    ' Variable: dltaEnd stores the working value for dlta end.
+    Dim dltaEnd As _Unsigned _Integer64
+
+    dltaEnd = dltaOfs + dltaSize
+    bufOfs = dltaOfs
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 7
+        opPtrTable(i) = 0
+    Next i
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 7
+        dataPtrTable(i) = 0
+    Next i
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 7
+        Call AmgAnimReadU32BE(bufOfs, opPtrTable(i))
+    Next i
+
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 7
+        Call AmgAnimReadU32BE(bufOfs, dataPtrTable(i))
+    Next i
+
+    If (anhdBits And 1) <> 0 Then
+        itemSize = 4
+    Else
+        itemSize = 2
+    End If
+
+    If itemSize <= 0 Then Exit Sub
+    If (anim.rowBytes Mod itemSize) <> 0 Then
+'         Print "DLTA op7 item size does not divide row bytes."
+        Exit Sub
+    End If
+
+    colCount = anim.rowBytes \ itemSize
+
+    ' Loop purpose: use p as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For p = 0 To anim.nPlanes - 1
+        If opPtrTable(p) <> 0 Then
+            If dataPtrTable(p) = 0 Then
+'                 Print "DLTA op7 data pointer missing."
+                Exit Sub
+            End If
+
+            opListOfs = dltaOfs + opPtrTable(p)
+            dataListOfs = dltaOfs + dataPtrTable(p)
+
+            If opListOfs >= dltaEnd Then
+'                 Print "DLTA op7 opcode pointer outside chunk."
+                Exit Sub
+            End If
+
+            If dataListOfs >= dltaEnd Then
+'                 Print "DLTA op7 data pointer outside chunk."
+                Exit Sub
+            End If
+
+            planeBase = p * anim.planeSize
+            planeEnd = planeBase + anim.planeSize
+            bufOfs = opListOfs
+
+            ' Loop purpose: iterate through image columns, pixels, or horizontal positions.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For col = 0 To colCount - 1
+                If bufOfs >= dltaEnd Then
+'                     Print "DLTA op7 opcode list ends too early."
+                    Exit Sub
+                End If
+
+                Call AmgAnimReadByte(bufOfs, b)
+                opCount = b
+                dstOfs = planeBase + col * itemSize
+
+                ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+                ' The loop order matters because later statements expect the data to be visited sequentially.
+                For i = 1 To opCount
+                    If bufOfs >= dltaEnd Then
+'                         Print "DLTA op7 opcode stream ends too early."
+                        Exit Sub
+                    End If
+
+                    Call AmgAnimReadByte(bufOfs, b)
+                    opCode = b
+
+                    If opCode = 0 Then
+                        If bufOfs >= dltaEnd Then
+'                             Print "DLTA op7 SAME count missing."
+                            Exit Sub
+                        End If
+
+                        Call AmgAnimReadByte(bufOfs, b)
+                        runCount = b
+
+                        If dataListOfs + itemSize > dltaEnd Then
+'                             Print "DLTA op7 SAME data overruns chunk."
+                            Exit Sub
+                        End If
+
+                        ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+                        ' The loop order matters because later statements expect the data to be visited sequentially.
+                        For j = 0 To itemSize - 1
+                            valueBytes(j) = AmgAnimGetActiveByte(dataListOfs + j)
+                        Next j
+                        dataListOfs = dataListOfs + itemSize
+
+                        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                        Do While runCount > 0
+                            If dstOfs < planeBase Or dstOfs + itemSize > planeEnd Then
+'                                 Print "DLTA op7 SAME overruns plane."
+                                Exit Sub
+                            End If
+
+                            ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+                            ' The loop order matters because later statements expect the data to be visited sequentially.
+                            For j = 0 To itemSize - 1
+                                planar(dstOfs + j) = valueBytes(j)
+                            Next j
+
+                            dstOfs = dstOfs + anim.rowBytes
+                            runCount = runCount - 1
+                        Loop
+
+                    ElseIf (opCode And &H80) <> 0 Then
+                        runCount = opCode And &H7F
+
+                        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                        Do While runCount > 0
+                            If dataListOfs + itemSize > dltaEnd Then
+'                                 Print "DLTA op7 UNIQ data overruns chunk."
+                                Exit Sub
+                            End If
+
+                            If dstOfs < planeBase Or dstOfs + itemSize > planeEnd Then
+'                                 Print "DLTA op7 UNIQ overruns plane."
+                                Exit Sub
+                            End If
+
+                            ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+                            ' The loop order matters because later statements expect the data to be visited sequentially.
+                            For j = 0 To itemSize - 1
+                                planar(dstOfs + j) = AmgAnimGetActiveByte(dataListOfs + j)
+                            Next j
+
+                            dataListOfs = dataListOfs + itemSize
+                            dstOfs = dstOfs + anim.rowBytes
+                            runCount = runCount - 1
+                        Loop
+
+                    Else
+                        dstOfs = dstOfs + opCode * anim.rowBytes
+
+                        If dstOfs < planeBase Or dstOfs > planeEnd Then
+'                             Print "DLTA op7 SKIP overruns plane column."
+                            Exit Sub
+                        End If
+                    End If
+                Next i
+            Next col
+        End If
+    Next p
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy planar buffer.
+' Parameters: src = source-side value or buffer reference; dst = destination-side value or buffer reference.
+Sub AmgAnimCopyPlanarBuffer (src() As _Unsigned _Byte, dst() As _Unsigned _Byte)
+    ' Variable: dstMem stores the memory handle or memory-related helper value.
+    Dim dstMem As _MEM
+
+    If UBound(src) <> UBound(dst) Then Exit Sub
+    dstMem = _Mem(dst())
+    _MemPut dstMem, dstMem.OFFSET, src()
+    If _MemExists(dstMem) Then _MemFree dstMem
+End Sub
+
+
+' Purpose: Convert decoded Amiga bitmap state into a QB64 image.
+' Parameters: targetImg = QB64 image handle used to store or draw decoded pixels; anim = working value for animation; pal = working value for pal; chunky = working value for chunky.
+Sub AmgAnimRenderChunkyFrameMem (animId As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, chunky() As _Unsigned _Byte)
+    ' Variable: x stores the horizontal pixel or coordinate index.
+    Dim x As Long
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: idx stores the working value for idx.
+    Dim idx As Long
+    ' Variable: rr stores the working value for rr.
+    Dim rr As Long
+    ' Variable: gg stores the working value for gg.
+    Dim gg As Long
+    ' Variable: bb stores the working value for bb.
+    Dim bb As Long
+    ' Variable: ctrl stores the working value for ctrl.
+    Dim ctrl As Long
+    ' Variable: dataValue stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataValue As Long
+    ' Variable: hamDataBits stores the buffer that holds raw, packed, or decoded byte data.
+    Dim hamDataBits As Long
+    ' Variable: hamDataMask stores the buffer that holds raw, packed, or decoded byte data.
+    Dim hamDataMask As Long
+    ' Variable: rowOfs stores the row pointer, row buffer, or row index used for image processing.
+    Dim rowOfs As Long
+    ' Variable: pixelIndex stores the index variable used to address the current item.
+    Dim pixelIndex As Long
+    ' Variable: frameMem stores the memory handle or memory-related helper value.
+    Dim frameMem As _MEM
+    ' Variable: pixelCount stores the count used to size or iterate the current data set.
+    Dim pixelCount As Long
+    ' Array: pal32 stores the working value for pal 32.
+    Dim pal32(255) As _Unsigned Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    If _MemExists(AmgAnimCanvasMem(animId)) = 0 Then Exit Sub
+    pixelCount = anim.w * anim.h
+    If pixelCount <= 0 Then Exit Sub
+    If pixelCount <> amg_anim_scratch_pixels_size Then
+        ' dynamic array: amg_anim_scratch_pixels is resized here to hold the working value for Amiga animation scratch pixels.
+        ReDim amg_anim_scratch_pixels(pixelCount - 1) As _Unsigned Long
+        amg_anim_scratch_pixels_size = pixelCount
+    End If
+
+    If anim.isHAM Then
+        hamDataBits = anim.nPlanes - 2
+        If hamDataBits < 1 Then hamDataBits = 1
+        hamDataMask = 2 ^ hamDataBits - 1
+
+        ' Loop purpose: iterate through image rows or vertical positions.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For y = 0 To anim.h - 1
+            rowOfs = y * anim.w
+            rr = 0
+            gg = 0
+            bb = 0
+
+            ' Loop purpose: iterate through image columns, pixels, or horizontal positions.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For x = 0 To anim.w - 1
+                idx = chunky(rowOfs + x)
+                ctrl = idx \ (2 ^ hamDataBits)
+                dataValue = idx And hamDataMask
+
+                Select Case ctrl
+                    Case 0
+                        If dataValue >= 0 And dataValue <= UBound(pal) Then
+                            rr = pal(dataValue).r
+                            gg = pal(dataValue).g
+                            bb = pal(dataValue).b
+                        Else
+                            rr = 255
+                            gg = 0
+                            bb = 255
+                        End If
+                    Case 1
+                        If hamDataBits = 6 Then
+                            bb = (dataValue * 4) Or (bb And 3)
+                        ElseIf hamDataBits = 4 Then
+                            bb = dataValue * 17
+                        Else
+                            bb = (dataValue * 255) \ hamDataMask
+                        End If
+                    Case 2
+                        If hamDataBits = 6 Then
+                            rr = (dataValue * 4) Or (rr And 3)
+                        ElseIf hamDataBits = 4 Then
+                            rr = dataValue * 17
+                        Else
+                            rr = (dataValue * 255) \ hamDataMask
+                        End If
+                    Case 3
+                        If hamDataBits = 6 Then
+                            gg = (dataValue * 4) Or (gg And 3)
+                        ElseIf hamDataBits = 4 Then
+                            gg = dataValue * 17
+                        Else
+                            gg = (dataValue * 255) \ hamDataMask
+                        End If
+                End Select
+
+                pixelIndex = rowOfs + x
+                amg_anim_scratch_pixels(pixelIndex) = _RGB32(rr, gg, bb)
+            Next x
+        Next y
+    Else
+        ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For i = 0 To 255
+            If i <= UBound(pal) Then
+                pal32(i) = _RGB32(pal(i).r, pal(i).g, pal(i).b)
+            Else
+                pal32(i) = _RGB32(255, 0, 255)
+            End If
+        Next i
+
+        ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For i = 0 To pixelCount - 1
+            amg_anim_scratch_pixels(i) = pal32(chunky(i))
+        Next i
+    End If
+
+    frameMem = AmgAnimCanvasMem(animId)
+    If _MemExists(frameMem) = 0 Then Exit Sub
+    _MemPut frameMem, frameMem.OFFSET, amg_anim_scratch_pixels()
+End Sub
+
+
+' Purpose: Convert decoded Amiga bitmap state into a QB64 image.
+' Parameters: targetImg = QB64 image handle used to store or draw decoded pixels; anim = working value for animation; pal = working value for pal; planar = working value for planar.
+
+' Purpose: Initialize lookup tables used by the fast planar renderer.
+' Parameters: none.
+Sub AmgAnimInitPlanarRenderLUT ()
+    ' Variable: planeIndex stores the index variable used to address the current item.
+    Dim planeIndex As Long
+    ' Variable: byteValue stores the current byte value being expanded into lookup entries.
+    Dim byteValue As Long
+    ' Variable: tableIndex stores the linearized index into the packed lookup tables.
+    Dim tableIndex As Long
+    ' Variable: weightValue stores the bit weight contributed by the current plane.
+    Dim weightValue As _Unsigned Long
+    ' Variable: packLo stores packed contributions for the first four pixels of an 8-pixel group.
+    Dim packLo As _Unsigned Long
+    ' Variable: packHi stores packed contributions for the last four pixels of an 8-pixel group.
+    Dim packHi As _Unsigned Long
+    ' Variable: mul1 stores the byte multiplier for packed pixel 1.
+    Dim mul1 As _Unsigned Long
+    ' Variable: mul2 stores the byte multiplier for packed pixel 2.
+    Dim mul2 As _Unsigned Long
+    ' Variable: mul3 stores the byte multiplier for packed pixel 3.
+    Dim mul3 As _Unsigned Long
+
+    If amg_anim_plane_pack_ready Then Exit Sub
+
+    mul1 = 256
+    mul2 = 65536
+    mul3 = 16777216
+
+    ReDim amg_anim_plane_pack_lo(2047) As _Unsigned Long
+    ReDim amg_anim_plane_pack_hi(2047) As _Unsigned Long
+
+    ' Loop purpose: build one lookup slice per bitplane.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For planeIndex = 0 To 7
+        weightValue = 2 ^ planeIndex
+
+        ' Loop purpose: expand each possible source byte into packed pixel contributions.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For byteValue = 0 To 255
+            tableIndex = planeIndex * 256 + byteValue
+            packLo = 0
+            packHi = 0
+
+            If (byteValue And 128) <> 0 Then packLo = packLo Or weightValue
+            If (byteValue And 64) <> 0 Then packLo = packLo Or (weightValue * mul1)
+            If (byteValue And 32) <> 0 Then packLo = packLo Or (weightValue * mul2)
+            If (byteValue And 16) <> 0 Then packLo = packLo Or (weightValue * mul3)
+
+            If (byteValue And 8) <> 0 Then packHi = packHi Or weightValue
+            If (byteValue And 4) <> 0 Then packHi = packHi Or (weightValue * mul1)
+            If (byteValue And 2) <> 0 Then packHi = packHi Or (weightValue * mul2)
+            If (byteValue And 1) <> 0 Then packHi = packHi Or (weightValue * mul3)
+
+            amg_anim_plane_pack_lo(tableIndex) = packLo
+            amg_anim_plane_pack_hi(tableIndex) = packHi
+        Next byteValue
+    Next planeIndex
+
+    amg_anim_plane_pack_ready = -1
+End Sub
+
+
+Sub AmgAnimRenderPlanarFrameMem (animId As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8, planar() As _Unsigned _Byte)
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: xByte stores the working value for x byte.
+    Dim xByte As Long
+    ' Variable: p stores the generic pointer or position value.
+    Dim p As Long
+    ' Variable: rowBase stores the row pointer, row buffer, or row index used for image processing.
+    Dim rowBase As Long
+    ' Array: planeBase stores the working value for plane base.
+    Dim planeBase(7) As Long
+     ' Variable: baseX stores the working value for base x.
+    Dim baseX As Long
+    ' Variable: pixelCount stores the count used to size or iterate the current data set.
+    Dim pixelCount As Long
+    ' Variable: frameMem stores the memory handle or memory-related helper value.
+    Dim frameMem As _MEM
+    ' Array: pal32 stores the working value for pal 32.
+    Dim pal32(255) As _Unsigned Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: fullByteCount stores how many complete 8-pixel source bytes are needed for the row width.
+    Dim fullByteCount As Long
+    ' Variable: tailPixels stores how many pixels are left in the partial byte at row end.
+    Dim tailPixels As Long
+    ' Variable: byteOfs stores the source offset of the current planar byte inside the row.
+    Dim byteOfs As Long
+    ' Variable: tableIndex stores the linearized index into the packed planar render lookup tables.
+    Dim tableIndex As Long
+    ' Variable: packLo stores packed 4-pixel indices for pixels 0..3 of the current byte group.
+    Dim packLo As _Unsigned Long
+    ' Variable: packHi stores packed 4-pixel indices for pixels 4..7 of the current byte group.
+    Dim packHi As _Unsigned Long
+
+    If AmgAnimValidId(animId) = 0 Then Exit Sub
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Sub
+    If _MemExists(AmgAnimCanvasMem(animId)) = 0 Then Exit Sub
+    If anim.isHAM Then
+        Call AmgAnimPlanarToChunky(anim, planar(), amg_anim_scratch_chunky())
+        Call AmgAnimRenderChunkyFrameMem(animId, anim, pal(), amg_anim_scratch_chunky())
+        Exit Sub
+    End If
+
+    pixelCount = anim.w * anim.h
+    If pixelCount <= 0 Then Exit Sub
+    If pixelCount <> amg_anim_scratch_pixels_size Then
+        ' dynamic array: amg_anim_scratch_pixels is resized here to hold the working value for Amiga animation scratch pixels.
+        ReDim amg_anim_scratch_pixels(pixelCount - 1) As _Unsigned Long
+        amg_anim_scratch_pixels_size = pixelCount
+    End If
+
+    If anim.nPlanes <= 0 Then Exit Sub
+    If anim.nPlanes > 8 Then
+        Call AmgAnimPlanarToChunky(anim, planar(), amg_anim_scratch_chunky())
+        Call AmgAnimRenderChunkyFrameMem(animId, anim, pal(), amg_anim_scratch_chunky())
+        Exit Sub
+    End If
+
+    Call AmgAnimInitPlanarRenderLUT
+
+    ' Loop purpose: convert palette entries once per render pass.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To 255
+        If i <= UBound(pal) Then
+            pal32(i) = _RGB32(pal(i).r, pal(i).g, pal(i).b)
+        Else
+            pal32(i) = _RGB32(255, 0, 255)
+        End If
+    Next i
+
+    ' Loop purpose: precompute the start offset of each bitplane in the planar source buffer.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For p = 0 To anim.nPlanes - 1
+        planeBase(p) = p * anim.planeSize
+    Next p
+
+    fullByteCount = anim.w \ 8
+    tailPixels = anim.w And 7
+
+    ' Loop purpose: iterate through image rows or vertical positions.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 0 To anim.h - 1
+        rowBase = y * anim.rowBytes
+        baseX = y * anim.w
+
+        ' Loop purpose: decode all full 8-pixel byte groups without width-bound checks.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For xByte = 0 To fullByteCount - 1
+            byteOfs = rowBase + xByte
+            packLo = 0
+            packHi = 0
+
+            ' Loop purpose: merge the contribution from each active plane into the packed pixel indices.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                tableIndex = p * 256 + planar(planeBase(p) + byteOfs)
+                packLo = packLo Or amg_anim_plane_pack_lo(tableIndex)
+                packHi = packHi Or amg_anim_plane_pack_hi(tableIndex)
+            Next p
+
+            amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+            amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+            amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+            amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+            amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+            amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+            amg_anim_scratch_pixels(baseX + 6) = pal32((packHi \ 65536) And 255)
+            amg_anim_scratch_pixels(baseX + 7) = pal32((packHi \ 16777216) And 255)
+
+            baseX = baseX + 8
+        Next xByte
+
+        If tailPixels > 0 Then
+            byteOfs = rowBase + fullByteCount
+            packLo = 0
+            packHi = 0
+
+            ' Loop purpose: merge the contribution from each active plane into the partial byte at row end.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For p = 0 To anim.nPlanes - 1
+                tableIndex = p * 256 + planar(planeBase(p) + byteOfs)
+                packLo = packLo Or amg_anim_plane_pack_lo(tableIndex)
+                packHi = packHi Or amg_anim_plane_pack_hi(tableIndex)
+            Next p
+
+            Select Case tailPixels
+                Case 7
+                    amg_anim_scratch_pixels(baseX + 6) = pal32((packHi \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 6
+                    amg_anim_scratch_pixels(baseX + 5) = pal32((packHi \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 5
+                    amg_anim_scratch_pixels(baseX + 4) = pal32(packHi And 255)
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 4
+                    amg_anim_scratch_pixels(baseX + 3) = pal32((packLo \ 16777216) And 255)
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 3
+                    amg_anim_scratch_pixels(baseX + 2) = pal32((packLo \ 65536) And 255)
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 2
+                    amg_anim_scratch_pixels(baseX + 1) = pal32((packLo \ 256) And 255)
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+                Case 1
+                    amg_anim_scratch_pixels(baseX) = pal32(packLo And 255)
+            End Select
+        End If
+    Next y
+
+    frameMem = AmgAnimCanvasMem(animId)
+    If _MemExists(frameMem) = 0 Then Exit Sub
+    _MemPut frameMem, frameMem.OFFSET, amg_anim_scratch_pixels()
+End Sub
+
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation build frame by number.
+' Parameters: anim = working value for animation; frames = dynamic array that stores per-frame data or cached frame metadata; pal = working value for pal; planarBase = working value for planar base; planarA = working value for planar a; planarB = working value for planar b; additional parameters continue the same pattern.
+Sub AmgAnimBuildFrameByNumber (anim As AmgAnimInfo, frames() As AmgAnimFrameInfo, pal() As AmgAnimRGB8, planarBase() As _Unsigned _Byte, planarA() As _Unsigned _Byte, planarB() As _Unsigned _Byte, frameNumber As Long, chunky() As _Unsigned _Byte, ok As Long)
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: shownIsA stores the working value for shown is a.
+    Dim shownIsA As Long
+    ' Variable: usePrev stores the working value for use prev.
+    Dim usePrev As Long
+
+    ok = 0
+    If frameNumber < 0 Then Exit Sub
+    If frameNumber > anim.frameCount - 1 Then Exit Sub
+
+    Call AmgAnimCopyPlanarBuffer(planarBase(), planarA())
+    Call AmgAnimCopyPlanarBuffer(planarBase(), planarB())
+
+    If frames(0).hasCMAP Then
+        Call AmgAnimReadCMAPAt(frames(0).cmapOfs, frames(0).cmapSize, pal())
+    End If
+
+    shownIsA = -1
+
+    If frameNumber = 0 Then
+        Call AmgAnimPlanarToChunky(anim, planarA(), chunky())
+        ok = -1
+        Exit Sub
+    End If
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For frameIndex = 1 To frameNumber
+        usePrev = 0
+        If frames(frameIndex).interleave = 1 Then usePrev = -1
+
+        If shownIsA Then
+            If usePrev Then
+                Call AmgAnimCopyPlanarBuffer(planarA(), planarB())
+            End If
+
+            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarB(), pal())
+            shownIsA = 0
+        Else
+            If usePrev Then
+                Call AmgAnimCopyPlanarBuffer(planarB(), planarA())
+            End If
+
+            Call AmgAnimDecodeFrameToHidden(anim, frames(frameIndex), planarA(), pal())
+            shownIsA = -1
+        End If
+    Next frameIndex
+
+    If shownIsA Then
+        Call AmgAnimPlanarToChunky(anim, planarA(), chunky())
+    Else
+        Call AmgAnimPlanarToChunky(anim, planarB(), chunky())
+    End If
+
+    ok = -1
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation get frame count internal.
+' Parameters: fileName = string holding a file path or a human-readable name.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimGetFrameCountInternal& (fileName As String)
+    ' Variable: anim stores the working value for animation.
+    Dim anim As AmgAnimInfo
+    ' dynamic array: frames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+    ReDim frames(0) As AmgAnimFrameInfo
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(0) As AmgAnimRGB8
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Long
+
+    AmgAnimGetFrameCountInternal = 0
+    Call AmgAnimLoadFileToBuffer(fileName, ok)
+    If ok = 0 Then Exit Function
+    Call AmgAnimUseScratchBuffer
+
+    Call AmgAnimLoadIndex(anim, frames(), pal())
+    AmgAnimGetFrameCountInternal = anim.frameCount
+End Function
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation extract frame image internal.
+' Parameters: animId = working value for animation id; frameNumber = working value for frame number.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimExtractFrameImageInternal& (animId As Long, frameNumber As Long)
+    ' Variable: img stores the QB64 image handle used to store or draw decoded pixels.
+    Dim img As Long
+
+    AmgAnimExtractFrameImageInternal = -1
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Function
+    If AmgAnimRenderFrameToCanvas(animId, frameNumber) = 0 Then Exit Function
+
+    img = _CopyImage(AmgAnimItems(animId).CanvasImage, 32)
+    If img > -2 Then Exit Function
+
+    AmgAnimExtractFrameImageInternal = img
+End Function
+
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc planar block.
+' Parameters: byteCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocPlanarBlock& (byteCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAllocPlanarBlock = -1
+    If byteCount <= 0 Then Exit Function
+
+    startIndex = amg_anim_planar_pool_used
+    neededTop = startIndex + byteCount - 1
+
+    If neededTop > UBound(amg_anim_planar_pool) Then
+        ' dynamic array: amg_anim_planar_pool is resized here to hold the working value for Amiga animation planar pool.
+        ReDim _Preserve amg_anim_planar_pool(neededTop) As _Unsigned _Byte
+    End If
+
+    amg_anim_planar_pool_used = startIndex + byteCount
+    AmgAnimAllocPlanarBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc chunky block.
+' Parameters: byteCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocChunkyBlock& (byteCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAllocChunkyBlock = -1
+    If byteCount <= 0 Then Exit Function
+
+    startIndex = amg_anim_chunky_pool_used
+    neededTop = startIndex + byteCount - 1
+
+    If neededTop > UBound(amg_anim_chunky_pool) Then
+        ' dynamic array: amg_anim_chunky_pool is resized here to hold the working value for Amiga animation chunky pool.
+        ReDim _Preserve amg_anim_chunky_pool(neededTop) As _Unsigned _Byte
+    End If
+
+    amg_anim_chunky_pool_used = startIndex + byteCount
+    AmgAnimAllocChunkyBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc pixels block.
+' Parameters: pixelCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocPixelsBlock& (pixelCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAllocPixelsBlock = -1
+    If pixelCount <= 0 Then Exit Function
+
+    startIndex = amg_anim_pixels_pool_used
+    neededTop = startIndex + pixelCount - 1
+
+    If neededTop > UBound(amg_anim_pixels_pool) Then
+        ' dynamic array: amg_anim_pixels_pool is resized here to hold the working value for Amiga animation pixels pool.
+        ReDim _Preserve amg_anim_pixels_pool(neededTop) As _Unsigned Long
+    End If
+
+    amg_anim_pixels_pool_used = startIndex + pixelCount
+    AmgAnimAllocPixelsBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation alloc palette block.
+' Parameters: colorCount = column index or color-related value.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimAllocPaletteBlock& (colorCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+
+    AmgAnimAllocPaletteBlock = -1
+    If colorCount <= 0 Then Exit Function
+
+    startIndex = amg_anim_palette_pool_used
+    neededTop = startIndex + colorCount - 1
+
+    If neededTop > UBound(amg_anim_palette_pool) Then
+        ' dynamic array: amg_anim_palette_pool is resized here to hold the palette storage or palette index used during indexed-color decoding.
+        ReDim _Preserve amg_anim_palette_pool(neededTop) As AmgAnimRGB8
+    End If
+
+    amg_anim_palette_pool_used = startIndex + colorCount
+    AmgAnimAllocPaletteBlock = startIndex
+End Function
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation ensure scratch capacity.
+' Parameters: planarSize = working value for planar size; chunkySize = working value for chunky size; palSize = working value for pal size.
+Sub AmgAnimEnsureScratchCapacity (planarSize As Long, chunkySize As Long, palSize As Long)
+    If planarSize > amg_anim_scratch_planar_size Then
+        ' dynamic array: amg_anim_scratch_planar_base is resized here to hold the working value for Amiga animation scratch planar base.
+        ReDim amg_anim_scratch_planar_base(planarSize - 1) As _Unsigned _Byte
+        ' dynamic array: amg_anim_scratch_planar_a is resized here to hold the working value for Amiga animation scratch planar a.
+        ReDim amg_anim_scratch_planar_a(planarSize - 1) As _Unsigned _Byte
+        ' dynamic array: amg_anim_scratch_planar_b is resized here to hold the working value for Amiga animation scratch planar b.
+        ReDim amg_anim_scratch_planar_b(planarSize - 1) As _Unsigned _Byte
+        amg_anim_scratch_planar_size = planarSize
+    End If
+
+    If chunkySize > amg_anim_scratch_chunky_size Then
+        ' dynamic array: amg_anim_scratch_chunky is resized here to hold the working value for Amiga animation scratch chunky.
+        ReDim amg_anim_scratch_chunky(chunkySize - 1) As _Unsigned _Byte
+        amg_anim_scratch_chunky_size = chunkySize
+    End If
+
+    If chunkySize > amg_anim_scratch_pixels_size Then
+        ' dynamic array: amg_anim_scratch_pixels is resized here to hold the working value for Amiga animation scratch pixels.
+        ReDim amg_anim_scratch_pixels(chunkySize - 1) As _Unsigned Long
+        amg_anim_scratch_pixels_size = chunkySize
+    End If
+
+    If palSize <= 0 Then palSize = 1
+    If palSize > amg_anim_scratch_pal_size Then
+        ' dynamic array: amg_anim_scratch_pal is resized here to hold the working value for Amiga animation scratch pal.
+        ReDim amg_anim_scratch_pal(palSize - 1) As AmgAnimRGB8
+        amg_anim_scratch_pal_size = palSize
+    End If
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation get stored info.
+' Parameters: animId = working value for animation id; anim = working value for animation.
+Sub AmgAnimGetStoredInfo (animId As Long, anim As AmgAnimInfo)
+    anim.frameCount = AmgAnimItems(animId).FrameCount
+    anim.w = AmgAnimItems(animId).WidthPx
+    anim.h = AmgAnimItems(animId).HeightPx
+    anim.nPlanes = AmgAnimItems(animId).NPlanes
+    anim.rowBytes = AmgAnimItems(animId).RowBytes
+    anim.planeSize = AmgAnimItems(animId).PlaneSize
+    anim.compression = AmgAnimItems(animId).Compression
+    anim.camg = AmgAnimItems(animId).Camg
+    anim.isHAM = AmgAnimItems(animId).IsHam
+    anim.firstFrameReady = -1
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy local palette to pool.
+' Parameters: pal = working value for pal; dstStart = working value for dst start; colorCount = column index or color-related value.
+Sub AmgAnimCopyLocalPaletteToPool (pal() As AmgAnimRGB8, dstStart As Long, colorCount As Long)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    ' Variable: copyCount stores the count used to size or iterate the current data set.
+    Dim copyCount As Long
+    If dstStart < 0 Then Exit Sub
+    copyCount = colorCount
+    If copyCount <= 0 Then Exit Sub
+    If copyCount > UBound(pal) + 1 Then copyCount = UBound(pal) + 1
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To copyCount - 1
+        amg_anim_palette_pool(dstStart + i) = pal(i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy pool palette to local.
+' Parameters: srcStart = working value for src start; colorCount = column index or color-related value; pal = working value for pal.
+Sub AmgAnimCopyPoolPaletteToLocal (srcStart As Long, colorCount As Long, pal() As AmgAnimRGB8)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    If colorCount <= 0 Then
+        ' dynamic array: pal is resized here to hold the working value for pal.
+        ReDim pal(0) As AmgAnimRGB8
+        Exit Sub
+    End If
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(colorCount - 1) As AmgAnimRGB8
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To colorCount - 1
+        pal(i) = amg_anim_palette_pool(srcStart + i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy local planar to pool.
+' Parameters: src = source-side value or buffer reference; dstStart = working value for dst start; byteCount = count used to size or iterate the current data set.
+Sub AmgAnimCopyLocalPlanarToPool (src() As _Unsigned _Byte, dstStart As Long, byteCount As Long)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+
+    If dstStart < 0 Then Exit Sub
+    If byteCount <= 0 Then Exit Sub
+
+    ' _MemPut na celé pole tady není bezpečný, protože zapíše celý reálný rozměr src(),
+    ' ne jen byteCount bajtů. Když je src() větší než cílový výřez v poolu,
+    ' skončí to chybou "memory region out of range".
+    For i = 0 To byteCount - 1
+        amg_anim_planar_pool(dstStart + i) = src(i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy pool planar to local.
+' Parameters: srcStart = working value for src start; byteCount = count used to size or iterate the current data set; dst = destination-side value or buffer reference.
+Sub AmgAnimCopyPoolPlanarToLocal (srcStart As Long, byteCount As Long, dst() As _Unsigned _Byte)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+
+    If byteCount <= 0 Then Exit Sub
+
+    ' Stejný důvod jako výše: _MemGet do celého pole dst() nectí byteCount.
+    For i = 0 To byteCount - 1
+        dst(i) = amg_anim_planar_pool(srcStart + i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy local chunky to pool.
+' Parameters: src = source-side value or buffer reference; dstStart = working value for dst start; byteCount = count used to size or iterate the current data set.
+Sub AmgAnimCopyLocalChunkyToPool (src() As _Unsigned _Byte, dstStart As Long, byteCount As Long)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    If dstStart < 0 Then Exit Sub
+    If byteCount <= 0 Then Exit Sub
+    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To byteCount - 1
+        amg_anim_chunky_pool(dstStart + i) = src(i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy local pixels to pool.
+' Parameters: src = source-side value or buffer reference; dstStart = working value for dst start; pixelCount = count used to size or iterate the current data set.
+Sub AmgAnimCopyLocalPixelsToPool (src() As _Unsigned Long, dstStart As Long, pixelCount As Long)
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+    If dstStart < 0 Then Exit Sub
+    If pixelCount <= 0 Then Exit Sub
+    ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For i = 0 To pixelCount - 1
+        amg_anim_pixels_pool(dstStart + i) = src(i)
+    Next i
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation get frame info.
+' Parameters: animId = working value for animation id; frameIndex = index variable used to address the current item; frameInfo = working value for frame info.
+Sub AmgAnimGetFrameInfo (animId As Long, frameIndex As Long, frameInfo As AmgAnimFrameInfo)
+    frameInfo = AmgAnimFrames(AmgAnimItems(animId).FrameStart + frameIndex)
+End Sub
+
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy local palette to scratch.
+' Parameters: pal = working value for pal.
+Sub AmgAnimCopyLocalPaletteToScratch (pal() As AmgAnimRGB8)
+    ' Variable: colorCount stores the column index or color-related value.
+    Dim colorCount As Long
+    ' Variable: indexValue stores the working value for index value.
+    Dim indexValue As Long
+
+    colorCount = UBound(pal) + 1
+    If colorCount <= 0 Then colorCount = 1
+
+    If colorCount > amg_anim_scratch_pal_size Then
+        ' dynamic array: amg_anim_scratch_pal is resized here to hold the working value for Amiga animation scratch pal.
+        ReDim amg_anim_scratch_pal(colorCount - 1) As AmgAnimRGB8
+        amg_anim_scratch_pal_size = colorCount
+    End If
+
+    ' Loop purpose: use indexValue as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For indexValue = 0 To colorCount - 1
+        amg_anim_scratch_pal(indexValue) = pal(indexValue)
+    Next indexValue
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation copy scratch palette to local.
+' Parameters: colorCount = column index or color-related value; pal = working value for pal.
+Sub AmgAnimCopyScratchPaletteToLocal (colorCount As Long, pal() As AmgAnimRGB8)
+    ' Variable: indexValue stores the working value for index value.
+    Dim indexValue As Long
+
+    If colorCount <= 0 Then colorCount = 1
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(colorCount - 1) As AmgAnimRGB8
+
+    ' Loop purpose: use indexValue as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For indexValue = 0 To colorCount - 1
+        pal(indexValue) = amg_anim_scratch_pal(indexValue)
+    Next indexValue
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation flush scratch owner.
+Sub AmgAnimFlushScratchOwner ()
+    ' Variable: ownerId stores the working value for owner id.
+    Dim ownerId As Long
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: totalChunky stores the working value for total chunky.
+    Dim totalChunky As Long
+
+    If amg_anim_scratch_owner_valid = 0 Then Exit Sub
+    ownerId = amg_anim_scratch_owner
+    If AmgAnimValidId(ownerId) = 0 Then
+        amg_anim_scratch_owner_valid = 0
+        Exit Sub
+    End If
+    If AmgAnimItems(ownerId).WorkReady = 0 Then Exit Sub
+
+    totalPlanar = AmgAnimItems(ownerId).RowBytes * AmgAnimItems(ownerId).HeightPx * AmgAnimItems(ownerId).NPlanes
+    totalChunky = AmgAnimItems(ownerId).WidthPx * AmgAnimItems(ownerId).HeightPx
+    Call AmgAnimCopyLocalPlanarToPool(amg_anim_scratch_planar_base(), AmgAnimItems(ownerId).WorkBaseStart, totalPlanar)
+    Call AmgAnimCopyLocalPlanarToPool(amg_anim_scratch_planar_a(), AmgAnimItems(ownerId).WorkAStart, totalPlanar)
+    Call AmgAnimCopyLocalPlanarToPool(amg_anim_scratch_planar_b(), AmgAnimItems(ownerId).WorkBStart, totalPlanar)
+    Call AmgAnimCopyLocalPaletteToPool(amg_anim_scratch_pal(), AmgAnimItems(ownerId).PalStart, AmgAnimItems(ownerId).PalCount)
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation restore work to scratch.
+' Parameters: animId = working value for animation id; anim = working value for animation; pal = working value for pal.
+Sub AmgAnimRestoreWorkToScratch (animId As Long, anim As AmgAnimInfo, pal() As AmgAnimRGB8)
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: totalChunky stores the working value for total chunky.
+    Dim totalChunky As Long
+
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    totalChunky = anim.w * anim.h
+    Call AmgAnimEnsureScratchCapacity(totalPlanar, totalChunky, AmgAnimItems(animId).PalCount)
+
+    If amg_anim_scratch_owner_valid Then
+        If amg_anim_scratch_owner = animId Then
+            Call AmgAnimCopyScratchPaletteToLocal(AmgAnimItems(animId).PalCount, pal())
+            Exit Sub
+        End If
+
+        Call AmgAnimFlushScratchOwner
+    End If
+
+    Call AmgAnimCopyPoolPlanarToLocal(AmgAnimItems(animId).WorkBaseStart, totalPlanar, amg_anim_scratch_planar_base())
+    Call AmgAnimCopyPoolPlanarToLocal(AmgAnimItems(animId).WorkAStart, totalPlanar, amg_anim_scratch_planar_a())
+    Call AmgAnimCopyPoolPlanarToLocal(AmgAnimItems(animId).WorkBStart, totalPlanar, amg_anim_scratch_planar_b())
+    Call AmgAnimCopyPoolPaletteToLocal(AmgAnimItems(animId).PalStart, AmgAnimItems(animId).PalCount, pal())
+    Call AmgAnimCopyLocalPaletteToScratch(pal())
+    amg_anim_scratch_owner = animId
+    amg_anim_scratch_owner_valid = -1
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation save scratch work.
+' Parameters: animId = working value for animation id; pal = working value for pal; totalPlanar = working value for total planar; totalChunky = working value for total chunky.
+Sub AmgAnimSaveScratchWork (animId As Long, pal() As AmgAnimRGB8)
+    Call AmgAnimCopyLocalPaletteToScratch(pal())
+    amg_anim_scratch_owner = animId
+    amg_anim_scratch_owner_valid = -1
+End Sub
+
+' Purpose: Routine for the Amiga ANIM backend: handle Amiga animation prepare base state.
+' Parameters: animId = working value for animation id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimPrepareBaseState% (animId As Long)
+    ' Variable: anim stores the working value for animation.
+    Dim anim As AmgAnimInfo
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(0) As AmgAnimRGB8
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: totalChunky stores the working value for total chunky.
+    Dim totalChunky As Long
+    ' Variable: frame0 stores the working value for frame 0.
+    Dim frame0 As AmgAnimFrameInfo
+
+    AmgAnimPrepareBaseState = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+
+    Call AmgAnimGetStoredInfo(animId, anim)
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    totalChunky = anim.w * anim.h
+    Call AmgAnimEnsureScratchCapacity(totalPlanar, totalChunky, AmgAnimItems(animId).PalCount)
+    Call AmgAnimFlushScratchOwner
+    Call AmgAnimCopyPoolPaletteToLocal(AmgAnimItems(animId).PalStart, AmgAnimItems(animId).PalCount, pal())
+    Call AmgAnimGetFrameInfo(animId, 0, frame0)
+
+    Call AmgAnimUseSlotBuffer(animId)
+    Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
+    Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
+    Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
+    Call AmgAnimSaveScratchWork(animId, pal())
+
+    AmgAnimItems(animId).DecodedFrame = 0
+    AmgAnimItems(animId).ShownIsA = -1
+    AmgAnimItems(animId).WorkReady = -1
+    Call AmgAnimMaybeStoreSnapshot(animId, 0)
+    AmgAnimPrepareBaseState = -1
+End Function
+
+' Purpose: Convert decoded Amiga bitmap state into a QB64 image.
+' Parameters: animId = working value for animation id; frameNumber = working value for frame number.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function AmgAnimRenderFrameToCanvas% (animId As Long, frameNumber As Long)
+    ' Variable: anim stores the working value for animation.
+    Dim anim As AmgAnimInfo
+    ' dynamic array: pal is resized here to hold the working value for pal.
+    ReDim pal(0) As AmgAnimRGB8
+    ' Variable: totalPlanar stores the working value for total planar.
+    Dim totalPlanar As Long
+    ' Variable: totalChunky stores the working value for total chunky.
+    Dim totalChunky As Long
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: usePrev stores the working value for use prev.
+    Dim usePrev As Long
+    ' Variable: frame0 stores the working value for frame 0.
+    Dim frame0 As AmgAnimFrameInfo
+    ' Variable: curFrame stores the working value for cur frame.
+    Dim curFrame As AmgAnimFrameInfo
+    ' Variable: restoredFrame stores the working value for restored frame.
+    Dim restoredFrame As Long
+
+    AmgAnimRenderFrameToCanvas = 0
+    If AmgAnimValidId(animId) = 0 Then Exit Function
+    If frameNumber < 0 Then Exit Function
+    If frameNumber >= AmgAnimItems(animId).FrameCount Then Exit Function
+    If AmgAnimItems(animId).CanvasImage > -2 Then Exit Function
+
+    Call AmgAnimGetStoredInfo(animId, anim)
+    totalPlanar = anim.rowBytes * anim.h * anim.nPlanes
+    totalChunky = anim.w * anim.h
+    Call AmgAnimEnsureScratchCapacity(totalPlanar, totalChunky, AmgAnimItems(animId).PalCount)
+
+    If AmgAnimItems(animId).WorkReady = 0 Then
+        If AmgAnimPrepareBaseState(animId) = 0 Then Exit Function
+        If frameNumber = 0 Then
+            AmgAnimItems(animId).RenderedFrame = 0
+            AmgAnimRenderFrameToCanvas = -1
+            Exit Function
+        End If
+    End If
+
+    Call AmgAnimRestoreWorkToScratch(animId, anim, pal())
+    Call AmgAnimUseSlotBuffer(animId)
+
+    If frameNumber = 0 Then
+        Call AmgAnimGetFrameInfo(animId, 0, frame0)
+        Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
+        Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
+        Call AmgAnimSaveScratchWork(animId, pal())
+        AmgAnimItems(animId).DecodedFrame = 0
+        AmgAnimItems(animId).ShownIsA = -1
+        AmgAnimItems(animId).RenderedFrame = 0
+        AmgAnimItems(animId).WorkReady = -1
+        Call AmgAnimMaybeStoreSnapshot(animId, 0)
+        AmgAnimRenderFrameToCanvas = -1
+        Exit Function
+    End If
+
+    If frameNumber < AmgAnimItems(animId).DecodedFrame Then
+        restoredFrame = -1
+        If AmgAnimRestoreNearestSnapshot(animId, frameNumber, anim, pal(), restoredFrame) = 0 Then
+            Call AmgAnimGetFrameInfo(animId, 0, frame0)
+            Call AmgAnimLoadFirstFramePlanar(anim, frame0, amg_anim_scratch_planar_base(), amg_anim_scratch_planar_a(), pal())
+            Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_base(), amg_anim_scratch_planar_b())
+            AmgAnimItems(animId).DecodedFrame = 0
+            AmgAnimItems(animId).ShownIsA = -1
+        End If
+    End If
+
+    If frameNumber > AmgAnimItems(animId).DecodedFrame Then
+        frameIndex = AmgAnimItems(animId).DecodedFrame + 1
+        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+        Do While frameIndex <= frameNumber
+            usePrev = 0
+            Call AmgAnimGetFrameInfo(animId, frameIndex, curFrame)
+            If curFrame.interleave = 1 Then usePrev = -1
+
+            If AmgAnimItems(animId).ShownIsA Then
+                If usePrev Then Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_a(), amg_anim_scratch_planar_b())
+                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_b(), pal())
+                AmgAnimItems(animId).ShownIsA = 0
+            Else
+                If usePrev Then Call AmgAnimCopyPlanarBuffer(amg_anim_scratch_planar_b(), amg_anim_scratch_planar_a())
+                Call AmgAnimDecodeFrameToHidden(anim, curFrame, amg_anim_scratch_planar_a(), pal())
+                AmgAnimItems(animId).ShownIsA = -1
+            End If
+
+            Call AmgAnimMaybeStoreSnapshot(animId, frameIndex)
+            frameIndex = frameIndex + 1
+        Loop
+    End If
+
+    If AmgAnimItems(animId).ShownIsA Then
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_a())
+    Else
+        Call AmgAnimRenderPlanarFrameMem(animId, anim, pal(), amg_anim_scratch_planar_b())
+    End If
+
+    Call AmgAnimSaveScratchWork(animId, pal())
+    AmgAnimItems(animId).DecodedFrame = frameNumber
+    AmgAnimItems(animId).RenderedFrame = frameNumber
+    AmgAnimItems(animId).WorkReady = -1
+    Call AmgAnimMaybeStoreSnapshot(animId, frameNumber)
+    AmgAnimRenderFrameToCanvas = -1
+End Function
+
+
+'not tested:

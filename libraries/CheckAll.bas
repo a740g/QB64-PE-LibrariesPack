@@ -33,4 +33,4 @@ $USELIBRARY:'RhoSigma/Sha2-Hash'
 $USELIBRARY:'RhoSigma/Simplebuffer'
 $USELIBRARY:'SpriggsySpriggs/PipeCom'
 $USELIBRARY:'TerryRitchie/MenuLib'
-
+$USELIBRARY:'Petr/AnimManager'

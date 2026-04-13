@@ -1,0 +1,2320 @@
+$INCLUDEONCE
+
+$IF VERSION < 4.3.0 THEN
+    $ERROR "The Libraries Pack add-on needs at least QB64-PE v4.3.0"
+$END IF
+
+' =========================================================
+' Commented source copy for the GIF89A backend.
+' Explanatory comments were added in English without altering executable code.
+' =========================================================
+' Purpose: Open a GIF89A file, parse its structures, and prepare playback state.
+' Parameters: fileName = string holding a file path or a human-readable name.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aOpen& (fileName As String)
+    ' Variable: ff stores the working value for ff.
+    Dim ff As Integer
+    ' Variable: fileLen stores the working value for file len.
+    Dim fileLen As Long
+    ' Variable: headText stores the working value for head text.
+    Dim headText As String
+    ' Variable: ofs stores the current offset into packed or unpacked data.
+    Dim ofs As Long
+    ' Variable: screenWidth stores the width value used by this routine.
+    Dim screenWidth As Long
+    ' Variable: screenHeight stores the height value used by this routine.
+    Dim screenHeight As Long
+    ' Variable: packedByte stores the working value for packed byte.
+    Dim packedByte As Integer
+    ' Variable: globalTableFlag stores the working value for global table flag.
+    Dim globalTableFlag As Integer
+    ' Variable: globalTableCount stores the count used to size or iterate the current data set.
+    Dim globalTableCount As Long
+    ' Variable: backgroundIndex stores the index variable used to address the current item.
+    Dim backgroundIndex As Integer
+    ' Variable: aspectRatio stores the working value for aspect ratio.
+    Dim aspectRatio As Integer
+    ' Variable: bgColor stores the column index or color-related value.
+    Dim bgColor As _Unsigned Long
+    ' Variable: bgOfs stores the working value for bg ofs.
+    Dim bgOfs As Long
+    ' Variable: bgRed stores the working value for bg red.
+    Dim bgRed As Integer
+    ' Variable: bgGreen stores the working value for bg green.
+    Dim bgGreen As Integer
+    ' Variable: bgBlue stores the working value for bg blue.
+    Dim bgBlue As Integer
+    ' Variable: okFile stores the working value for ok file.
+    Dim okFile As Integer
+    ' Variable: blockId stores the working value for block id.
+    Dim blockId As Integer
+    ' Variable: extLabel stores the working value for ext label.
+    Dim extLabel As Integer
+    ' Variable: appIdText stores the working value for app id text.
+    Dim appIdText As String
+    ' Variable: appBlockLen stores the working value for app block len.
+    Dim appBlockLen As Integer
+    ' Variable: fileLoopCount stores the count used to size or iterate the current data set.
+    Dim fileLoopCount As Long
+    ' Variable: gcePacked stores the working value for gce packed.
+    Dim gcePacked As Integer
+    ' Variable: gceDelay stores the frame delay or timing value.
+    Dim gceDelay As Integer
+    ' Variable: gceTransparentFlag stores the working value for gce transparent flag.
+    Dim gceTransparentFlag As Integer
+    ' Variable: gceTransparentIndex stores the index variable used to address the current item.
+    Dim gceTransparentIndex As Integer
+    ' Variable: gceDisposal stores the working value for gce disposal.
+    Dim gceDisposal As Integer
+    ' Variable: leftPx stores the working value for left px.
+    Dim leftPx As Long
+    ' Variable: topPx stores the working value for top px.
+    Dim topPx As Long
+    ' Variable: frameWidth stores the width value used by this routine.
+    Dim frameWidth As Long
+    ' Variable: frameHeight stores the height value used by this routine.
+    Dim frameHeight As Long
+    ' Variable: localPacked stores the working value for local packed.
+    Dim localPacked As Integer
+    ' Variable: localTableFlag stores the working value for local table flag.
+    Dim localTableFlag As Integer
+    ' Variable: localTableCount stores the count used to size or iterate the current data set.
+    Dim localTableCount As Long
+    ' Variable: interlaced stores the working value for interlaced.
+    Dim interlaced As Integer
+    ' Variable: localTableOfs stores the working value for local table ofs.
+    Dim localTableOfs As Long
+    ' Variable: lzwMinCodeSize stores the working value for LZW min code size.
+    Dim lzwMinCodeSize As Integer
+    ' Variable: imageDataOfs stores the buffer that holds raw, packed, or decoded byte data.
+    Dim imageDataOfs As Long
+    ' Variable: slotIndex stores the slot number inside the module-wide storage arrays.
+    Dim slotIndex As Long
+    ' Variable: frameStart stores the working value for frame start.
+    Dim frameStart As Long
+    ' Variable: frameCounter stores the total number of frames available for the current animation.
+    Dim frameCounter As Long
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: dummyByte stores the working value for dummy byte.
+    Dim dummyByte As Integer
+    ' Variable: dataLen stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataLen As Long
+    ' Variable: RawData stores the buffer that holds raw, packed, or decoded byte data.
+    Dim RawData As String
+    ' Variable: snapshotCount stores the count used to size or iterate the current data set.
+    Dim snapshotCount As Long
+    ' Variable: snapshotMetaStart stores the working value for snapshot meta start.
+    Dim snapshotMetaStart As Long
+
+    Gif89aOpen = -1
+    fileLoopCount = 1
+    ff = FreeFile
+    okFile = 0
+
+    Open fileName For Binary As #ff
+    fileLen = LOF(ff)
+    If fileLen > 0 Then
+        RawData = Space$(fileLen)
+        Get #ff, 1, RawData
+        okFile = -1
+    End If
+    Close #ff
+
+    If okFile = 0 Then Exit Function
+    If fileLen < 13 Then Exit Function
+
+    headText = Left$(RawData, 6)
+    If headText <> "GIF87a" And headText <> "GIF89a" Then Exit Function
+
+    ofs = 7
+    screenWidth = Gif89aReadWord(RawData, ofs)
+    screenHeight = Gif89aReadWord(RawData, ofs)
+    packedByte = Gif89aReadByte(RawData, ofs)
+    backgroundIndex = Gif89aReadByte(RawData, ofs)
+    aspectRatio = Gif89aReadByte(RawData, ofs)
+
+    globalTableFlag = 0
+    If (packedByte And 128) <> 0 Then globalTableFlag = -1
+    globalTableCount = _ShL(1, (packedByte And 7) + 1)
+
+    If globalTableFlag <> 0 Then
+        bgColor = _RGBA32(0, 0, 0, 0)
+        If backgroundIndex >= 0 And backgroundIndex < globalTableCount Then
+            bgOfs = 14 + backgroundIndex * 3
+            If bgOfs + 2 <= fileLen Then
+                bgRed = Asc(Mid$(RawData, bgOfs, 1))
+                bgGreen = Asc(Mid$(RawData, bgOfs + 1, 1))
+                bgBlue = Asc(Mid$(RawData, bgOfs + 2, 1))
+                bgColor = _RGBA32(bgRed, bgGreen, bgBlue, 255)
+            End If
+        End If
+        ofs = ofs + globalTableCount * 3
+    Else
+        bgColor = _RGBA32(0, 0, 0, 0)
+    End If
+
+    slotIndex = Gif89aAllocSlot
+    Gif89aRawData(slotIndex) = RawData
+    Gif89aErrorTexts(slotIndex) = ""
+
+    Gif89aItems(slotIndex).Used = -1
+    Gif89aItems(slotIndex).Is89a = 0
+    If headText = "GIF89a" Then Gif89aItems(slotIndex).Is89a = -1
+    Gif89aItems(slotIndex).WidthPx = screenWidth
+    Gif89aItems(slotIndex).HeightPx = screenHeight
+    Gif89aItems(slotIndex).BackgroundIndex = backgroundIndex
+    Gif89aItems(slotIndex).GlobalTableFlag = globalTableFlag
+    Gif89aItems(slotIndex).GlobalTableCount = globalTableCount
+    Gif89aItems(slotIndex).GlobalTableOfs = 14
+    Gif89aItems(slotIndex).BgColor = bgColor
+    Gif89aItems(slotIndex).CurrentFrame = 0
+    Gif89aItems(slotIndex).Playing = 0
+    Gif89aItems(slotIndex).Paused = 0
+    Gif89aItems(slotIndex).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    Gif89aItems(slotIndex).FileLoopCount = 1
+    Gif89aItems(slotIndex).LoopIteration = 1
+    Gif89aItems(slotIndex).NextTick = 0
+    Gif89aItems(slotIndex).RemainingDelay = 0
+    Gif89aItems(slotIndex).LastRawTimer = 0
+    Gif89aItems(slotIndex).CanvasHandle = 0
+    Gif89aItems(slotIndex).RestoreHandle = 0
+    Gif89aItems(slotIndex).RenderedFrame = -1
+    Gif89aItems(slotIndex).SnapshotMetaStart = 0
+    Gif89aItems(slotIndex).SnapshotCount = 0
+    Gif89aItems(slotIndex).SnapshotInterval = 0
+
+    If globalTableFlag = 0 Then
+        Gif89aItems(slotIndex).GlobalTableOfs = 0
+    End If
+
+    frameCounter = 0
+    frameStart = Gif89aFrameTail
+
+    gceDelay = 10
+    gceTransparentFlag = 0
+    gceTransparentIndex = 0
+    gceDisposal = 0
+
+    dataLen = Len(RawData)
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While ofs <= dataLen
+        blockId = Gif89aReadByte(RawData, ofs)
+
+        If blockId = &H3B Then Exit Do
+
+        If blockId = &H21 Then
+            extLabel = Gif89aReadByte(RawData, ofs)
+            Select Case extLabel
+                Case &HF9
+                    If Gif89aReadByte(RawData, ofs) = 4 Then
+                        gcePacked = Gif89aReadByte(RawData, ofs)
+                        gceDelay = Gif89aReadWord(RawData, ofs)
+                        gceTransparentIndex = Gif89aReadByte(RawData, ofs)
+                        dummyByte = Gif89aReadByte(RawData, ofs)
+                        gceDisposal = (gcePacked And &H1C) \ 4
+                        gceTransparentFlag = 0
+                        If (gcePacked And 1) <> 0 Then gceTransparentFlag = -1
+                    Else
+                        Gif89aSkipSubBlocks RawData, ofs
+                    End If
+                Case &HFF
+                    appBlockLen = Gif89aReadByte(RawData, ofs)
+                    If appBlockLen = 11 Then
+                        If ofs + 10 <= Len(RawData) Then
+                            appIdText = Mid$(RawData, ofs, 11)
+                            ofs = ofs + 11
+                            If appIdText = "NETSCAPE2.0" Or appIdText = "ANIMEXTS1.0" Then
+                                fileLoopCount = Gif89aReadLoopCountFromAppExt(RawData, ofs)
+                            Else
+                                Gif89aSkipSubBlocks RawData, ofs
+                            End If
+                        Else
+                            Exit Do
+                        End If
+                    Else
+                        If appBlockLen > 0 Then ofs = ofs + appBlockLen
+                        Gif89aSkipSubBlocks RawData, ofs
+                    End If
+                Case Else
+                    Gif89aSkipSubBlocks RawData, ofs
+            End Select
+        ElseIf blockId = &H2C Then
+            leftPx = Gif89aReadWord(RawData, ofs)
+            topPx = Gif89aReadWord(RawData, ofs)
+            frameWidth = Gif89aReadWord(RawData, ofs)
+            frameHeight = Gif89aReadWord(RawData, ofs)
+            localPacked = Gif89aReadByte(RawData, ofs)
+
+            localTableFlag = 0
+            If (localPacked And 128) <> 0 Then localTableFlag = -1
+            interlaced = 0
+            If (localPacked And 64) <> 0 Then interlaced = -1
+            localTableCount = _ShL(1, (localPacked And 7) + 1)
+
+            localTableOfs = 0
+            If localTableFlag <> 0 Then
+                localTableOfs = ofs
+                ofs = ofs + localTableCount * 3
+            End If
+
+            lzwMinCodeSize = Gif89aReadByte(RawData, ofs)
+            imageDataOfs = ofs
+            Gif89aSkipSubBlocks RawData, ofs
+
+            frameSlot = Gif89aAppendFrameSlot
+            Gif89aFrames(frameSlot).Used = -1
+            Gif89aFrames(frameSlot).LeftPx = leftPx
+            Gif89aFrames(frameSlot).TopPx = topPx
+            Gif89aFrames(frameSlot).WidthPx = frameWidth
+            Gif89aFrames(frameSlot).HeightPx = frameHeight
+            Gif89aFrames(frameSlot).DelayCs = gceDelay
+            If Gif89aFrames(frameSlot).DelayCs <= 0 Then Gif89aFrames(frameSlot).DelayCs = 10
+            Gif89aFrames(frameSlot).Disposal = gceDisposal
+            Gif89aFrames(frameSlot).TransparentFlag = gceTransparentFlag
+            Gif89aFrames(frameSlot).TransparentIndex = gceTransparentIndex
+            Gif89aFrames(frameSlot).Interlaced = interlaced
+            Gif89aFrames(frameSlot).LocalTableFlag = localTableFlag
+            Gif89aFrames(frameSlot).LocalTableCount = localTableCount
+            Gif89aFrames(frameSlot).LocalTableOfs = localTableOfs
+            Gif89aFrames(frameSlot).LzwMinCodeSize = lzwMinCodeSize
+            Gif89aFrames(frameSlot).ImageDataOfs = imageDataOfs
+            frameCounter = frameCounter + 1
+
+            gceDelay = 10
+            gceTransparentFlag = 0
+            gceTransparentIndex = 0
+            gceDisposal = 0
+        Else
+            Exit Do
+        End If
+    Loop
+
+    If frameCounter <= 0 Then
+        Gif89aErrorTexts(slotIndex) = "GIF has no image frames"
+        Gif89aClose slotIndex
+        Exit Function
+    End If
+
+    Gif89aItems(slotIndex).FrameStart = frameStart
+    Gif89aItems(slotIndex).FrameCount = frameCounter
+    Gif89aItems(slotIndex).FileLoopCount = fileLoopCount
+    Gif89aItems(slotIndex).LoopIteration = 1
+    snapshotCount = Gif89aCountSnapshots(frameCounter, GIF89A_SNAPSHOT_INTERVAL)
+    snapshotMetaStart = Gif89aAllocSnapshotMetaBlock(snapshotCount)
+    If snapshotMetaStart >= 0 Then
+        Gif89aItems(slotIndex).SnapshotMetaStart = snapshotMetaStart
+        Gif89aItems(slotIndex).SnapshotCount = snapshotCount
+        Gif89aItems(slotIndex).SnapshotInterval = GIF89A_SNAPSHOT_INTERVAL
+    End If
+    Gif89aResetRenderState slotIndex
+    Gif89aItems(slotIndex).NextTick = Gif89aTimeAdd(Timer, Gif89aFrames(frameStart).DelayCs / 100#)
+
+    Gif89aOpen = slotIndex
+End Function
+
+' Purpose: Open a GIF89A file, parse its structures, and prepare playback state.
+' Parameters: fileName = string holding a file path or a human-readable name; maxWidth = maximum allowed width; maxHeight = maximum allowed height; maxFrames = maximum allowed frames.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aOpenLimit& (fileName As String, maxWidth As Long, maxHeight As Long, maxFrames As Long)
+    ' Variable: ok stores the success flag returned by the current routine.
+    Dim ok As Integer
+    ' Variable: is89a stores the Boolean-like flag used by the current routine.
+    Dim is89a As Integer
+    ' Variable: widthPx stores the decoded image width in pixels.
+    Dim widthPx As Long
+    ' Variable: heightPx stores the decoded image height in pixels.
+    Dim heightPx As Long
+    ' Variable: frameCount stores the total number of frames available for the current animation.
+    Dim frameCount As Long
+
+    Gif89aOpenLimit = -1
+    If maxWidth <= 0 And maxHeight <= 0 And maxFrames <= 0 Then
+        Gif89aOpenLimit = Gif89aOpen(fileName)
+        Exit Function
+    End If
+
+    Gif89aProbe fileName, ok, is89a, widthPx, heightPx, frameCount
+    If ok = 0 Then Exit Function
+
+    If maxWidth > 0 Then
+        If widthPx > maxWidth Then Exit Function
+    End If
+
+    If maxHeight > 0 Then
+        If heightPx > maxHeight Then Exit Function
+    End If
+
+    If maxFrames > 0 Then
+        If frameCount > maxFrames Then Exit Function
+    End If
+
+    Gif89aOpenLimit = Gif89aOpen(fileName)
+End Function
+
+' Purpose: Read GIF89A metadata without fully opening the animation.
+' Parameters: fileName = string holding a file path or a human-readable name; ok = success flag returned by the current routine; is89a = Boolean-like flag used by the current routine; widthPx = decoded image width in pixels; heightPx = decoded image height in pixels; frameCount = total number of frames available for the current animation.
+Sub Gif89aProbe (fileName As String, ok As Integer, is89a As Integer, widthPx As Long, heightPx As Long, frameCount As Long)
+    ' Variable: ff stores the working value for ff.
+    Dim ff As Integer
+    ' Variable: fileLen stores the working value for file len.
+    Dim fileLen As Long
+    ' Variable: headText stores the working value for head text.
+    Dim headText As String
+    ' Variable: ofs stores the current offset into packed or unpacked data.
+    Dim ofs As Long
+    ' Variable: packedByte stores the working value for packed byte.
+    Dim packedByte As Integer
+    ' Variable: globalTableFlag stores the working value for global table flag.
+    Dim globalTableFlag As Integer
+    ' Variable: globalTableCount stores the count used to size or iterate the current data set.
+    Dim globalTableCount As Long
+    ' Variable: localPacked stores the working value for local packed.
+    Dim localPacked As Integer
+    ' Variable: localTableFlag stores the working value for local table flag.
+    Dim localTableFlag As Integer
+    ' Variable: localTableCount stores the count used to size or iterate the current data set.
+    Dim localTableCount As Long
+    ' Variable: blockId stores the working value for block id.
+    Dim blockId As Integer
+    ' Variable: extLabel stores the working value for ext label.
+    Dim extLabel As Integer
+    ' Variable: RawData stores the buffer that holds raw, packed, or decoded byte data.
+    Dim RawData As String
+
+    ok = 0
+    is89a = 0
+    widthPx = 0
+    heightPx = 0
+    frameCount = 0
+
+    ff = FreeFile
+    Open fileName For Binary As #ff
+    fileLen = LOF(ff)
+    If fileLen <= 0 Then
+        Close #ff
+        Exit Sub
+    End If
+
+    RawData = Space$(fileLen)
+    Get #ff, 1, RawData
+    Close #ff
+
+    If fileLen < 13 Then Exit Sub
+
+    headText = Left$(RawData, 6)
+    If headText <> "GIF87a" And headText <> "GIF89a" Then Exit Sub
+    If headText = "GIF89a" Then is89a = -1
+
+    ofs = 7
+    widthPx = Gif89aReadWord(RawData, ofs)
+    heightPx = Gif89aReadWord(RawData, ofs)
+    packedByte = Gif89aReadByte(RawData, ofs)
+    ofs = ofs + 2
+
+    globalTableFlag = 0
+    If (packedByte And 128) <> 0 Then globalTableFlag = -1
+    globalTableCount = _ShL(1, (packedByte And 7) + 1)
+    If globalTableFlag <> 0 Then
+        ofs = ofs + globalTableCount * 3
+    End If
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While ofs <= Len(RawData)
+        blockId = Gif89aReadByte(RawData, ofs)
+
+        Select Case blockId
+            Case &H3B
+                ok = -1
+                Exit Sub
+
+            Case &H21
+                extLabel = Gif89aReadByte(RawData, ofs)
+                Gif89aSkipSubBlocks RawData, ofs
+
+            Case &H2C
+                ofs = ofs + 8
+                localPacked = Gif89aReadByte(RawData, ofs)
+                localTableFlag = 0
+                If (localPacked And 128) <> 0 Then localTableFlag = -1
+                localTableCount = _ShL(1, (localPacked And 7) + 1)
+                If localTableFlag <> 0 Then
+                    ofs = ofs + localTableCount * 3
+                End If
+                ofs = ofs + 1
+                Gif89aSkipSubBlocks RawData, ofs
+                frameCount = frameCount + 1
+
+            Case Else
+                Exit Sub
+        End Select
+    Loop
+End Sub
+
+' Purpose: Release all resources owned by one GIF89A decoder instance.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aClose (gifId As Long)
+    ' Variable: firstFrame stores the working value for first frame.
+    Dim firstFrame As Long
+    ' Variable: lastFrame stores the working value for last frame.
+    Dim lastFrame As Long
+    ' Variable: frameIndex stores the index variable used to address the current item.
+    Dim frameIndex As Long
+    ' Variable: snapshotFirst stores the working value for snapshot first.
+    Dim snapshotFirst As Long
+    ' Variable: snapshotLast stores the working value for snapshot last.
+    Dim snapshotLast As Long
+    ' Variable: snapshotIndex stores the index variable used to address the current item.
+    Dim snapshotIndex As Long
+
+    If gifId < 0 Then Exit Sub
+    If gifId > UBound(Gif89aItems) Then Exit Sub
+    If Gif89aItems(gifId).Used = 0 Then Exit Sub
+
+    If Gif89aItems(gifId).CanvasHandle <= -2 Then _FreeImage Gif89aItems(gifId).CanvasHandle: Gif89aItems(gifId).CanvasHandle = 0
+    If Gif89aItems(gifId).RestoreHandle <= -2 Then _FreeImage Gif89aItems(gifId).RestoreHandle: Gif89aItems(gifId).RestoreHandle = 0
+
+    snapshotFirst = Gif89aItems(gifId).SnapshotMetaStart
+    snapshotLast = snapshotFirst + Gif89aItems(gifId).SnapshotCount - 1
+    If snapshotFirst < 0 Then snapshotFirst = 0
+    If snapshotLast > UBound(Gif89aSnapshotMeta) Then snapshotLast = UBound(Gif89aSnapshotMeta)
+    ' Loop purpose: use snapshotIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For snapshotIndex = snapshotFirst To snapshotLast
+        If Gif89aSnapshotMeta(snapshotIndex).CanvasHandle <= -2 Then _FreeImage Gif89aSnapshotMeta(snapshotIndex).CanvasHandle: Gif89aSnapshotMeta(snapshotIndex).CanvasHandle = 0
+        If Gif89aSnapshotMeta(snapshotIndex).RestoreHandle <= -2 Then _FreeImage Gif89aSnapshotMeta(snapshotIndex).RestoreHandle: Gif89aSnapshotMeta(snapshotIndex).RestoreHandle = 0
+        Gif89aSnapshotMeta(snapshotIndex).Used = 0
+        Gif89aSnapshotMeta(snapshotIndex).FrameIndex = -1
+    Next snapshotIndex
+
+    firstFrame = Gif89aItems(gifId).FrameStart
+    lastFrame = firstFrame + Gif89aItems(gifId).FrameCount - 1
+    If firstFrame < 0 Then firstFrame = 0
+    If lastFrame > UBound(Gif89aFrames) Then lastFrame = UBound(Gif89aFrames)
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For frameIndex = firstFrame To lastFrame
+        Gif89aFrames(frameIndex).Used = 0
+        Gif89aFrames(frameIndex).LeftPx = 0
+        Gif89aFrames(frameIndex).TopPx = 0
+        Gif89aFrames(frameIndex).WidthPx = 0
+        Gif89aFrames(frameIndex).HeightPx = 0
+        Gif89aFrames(frameIndex).DelayCs = 0
+        Gif89aFrames(frameIndex).Disposal = 0
+        Gif89aFrames(frameIndex).TransparentFlag = 0
+        Gif89aFrames(frameIndex).TransparentIndex = 0
+        Gif89aFrames(frameIndex).Interlaced = 0
+        Gif89aFrames(frameIndex).LocalTableFlag = 0
+        Gif89aFrames(frameIndex).LocalTableCount = 0
+        Gif89aFrames(frameIndex).LocalTableOfs = 0
+        Gif89aFrames(frameIndex).LzwMinCodeSize = 0
+        Gif89aFrames(frameIndex).ImageDataOfs = 0
+    Next frameIndex
+
+    Gif89aItems(gifId).Used = 0
+    Gif89aItems(gifId).Is89a = 0
+    Gif89aItems(gifId).WidthPx = 0
+    Gif89aItems(gifId).HeightPx = 0
+    Gif89aItems(gifId).BackgroundIndex = 0
+    Gif89aItems(gifId).GlobalTableFlag = 0
+    Gif89aItems(gifId).GlobalTableCount = 0
+    Gif89aItems(gifId).GlobalTableOfs = 0
+    Gif89aItems(gifId).BgColor = 0
+    Gif89aItems(gifId).FrameStart = 0
+    Gif89aItems(gifId).FrameCount = 0
+    Gif89aItems(gifId).CurrentFrame = 0
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    Gif89aItems(gifId).FileLoopCount = 1
+    Gif89aItems(gifId).LoopIteration = 1
+    Gif89aItems(gifId).NextTick = 0
+    Gif89aItems(gifId).RemainingDelay = 0
+    Gif89aItems(gifId).LastRawTimer = 0
+    Gif89aItems(gifId).CanvasHandle = 0
+    Gif89aItems(gifId).RestoreHandle = 0
+    Gif89aItems(gifId).RenderedFrame = -1
+    Gif89aItems(gifId).SnapshotMetaStart = 0
+    Gif89aItems(gifId).SnapshotCount = 0
+    Gif89aItems(gifId).SnapshotInterval = 0
+    Gif89aRawData(gifId) = ""
+    Gif89aErrorTexts(gifId) = ""
+End Sub
+
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A free all.
+Sub Gif89aFreeAll ()
+    ' Variable: gifId stores the working value for GIF id.
+    Dim gifId As Long
+
+    ' Loop purpose: walk through every currently allocated element in Gif89aItems.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For gifId = 0 To UBound(Gif89aItems)
+        If Gif89aItems(gifId).Used <> 0 Then
+            Gif89aClose gifId
+        End If
+    Next gifId
+
+    Gif89aFrameTail = 0
+    Gif89aSnapshotMetaNext = 0
+    Gif89aSnapshotMetaCapacity = 0
+End Sub
+
+' Purpose: Start GIF89A playback timing.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aPlay (gifId As Long)
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    ' Start playback from a fresh absolute schedule based on the current frame.
+    nowValue = Timer
+    Gif89aItems(gifId).Playing = -1
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).RemainingDelay = 0
+
+    frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+    If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+    delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+    Gif89aItems(gifId).LastRawTimer = nowValue
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(nowValue, delaySec)
+End Sub
+
+' Purpose: Stop GIF89A playback timing.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aStop (gifId As Long)
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    ' Variable: N stores the working value for n.
+    Dim N As Long
+
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).CurrentFrame = 0
+    Gif89aItems(gifId).LoopIteration = 1
+    Gif89aItems(gifId).NextTick = 0
+    Gif89aItems(gifId).RemainingDelay = 0
+    Gif89aItems(gifId).LastRawTimer = 0
+
+    Gif89aResetRenderState gifId
+    N = Gif89aEnsureFrameRendered(gifId, 0)
+End Sub
+
+
+' Purpose: Pause GIF89A playback while keeping the current frame.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aPause (gifId As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Playing = 0 Then Exit Sub
+
+    ' Preserve the remaining frame time so resume continues the current frame.
+    nowValue = Timer
+    Gif89aItems(gifId).RemainingDelay = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, nowValue)
+    Gif89aItems(gifId).LastRawTimer = nowValue
+    Gif89aItems(gifId).Playing = 0
+    Gif89aItems(gifId).Paused = -1
+End Sub
+
+' Purpose: Resume GIF89A playback after a pause.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aResume (gifId As Long)
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Paused = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    ' Resume from the leftover delay instead of restarting a full frame delay.
+    nowValue = Timer
+    frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+    If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+    delaySec = Gif89aItems(gifId).RemainingDelay
+    If delaySec <= 0 Then delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+
+    Gif89aItems(gifId).Paused = 0
+    Gif89aItems(gifId).Playing = -1
+    Gif89aItems(gifId).LastRawTimer = nowValue
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(nowValue, delaySec)
+    Gif89aItems(gifId).RemainingDelay = 0
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A set loop.
+' Parameters: gifId = working value for GIF id; loopMode = loop policy that controls whether playback stops or repeats.
+Sub Gif89aSetLoop (gifId As Long, loopMode As Long)
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    Select Case loopMode
+        Case GIF89A_LOOP_FILE_DEFAULT, GIF89A_LOOP_FOREVER, GIF89A_LOOP_ONCE
+            Gif89aItems(gifId).LoopMode = loopMode
+        Case Else
+            Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT
+    End Select
+End Sub
+
+' Purpose: Advance GIF89A playback using stored frame delays.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aUpdate (gifId As Long)
+    ' Variable: tickNow stores the working value for tick now.
+    Dim tickNow As Double
+    ' Variable: nextFrame stores the working value for next frame.
+    Dim nextFrame As Long
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: N stores the working value for n.
+    Dim N As Long
+    ' Variable: allowLoop stores the working value for allow loop.
+    Dim allowLoop As Integer
+    ' Variable: stepCount stores the count used to size or iterate the current data set.
+    Dim stepCount As Long
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: jumpFlag stores the working value for jump flag.
+    Dim jumpFlag As Integer
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).Playing = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+
+    tickNow = Timer
+
+    ' Ignore manual system clock jumps but keep the normal midnight wrap working.
+    jumpFlag = 0
+    If Gif89aItems(gifId).LastRawTimer > 0 Then
+        jumpFlag = Gif89aClockJumped(gifId, Gif89aItems(gifId).LastRawTimer, tickNow)
+    End If
+    If jumpFlag Then
+        Gif89aResyncAfterClockJump gifId, tickNow
+        Exit Sub
+    End If
+
+    Gif89aItems(gifId).LastRawTimer = tickNow
+    If Gif89aTimeReached(Gif89aItems(gifId).NextTick, tickNow) = 0 Then Exit Sub
+
+    ' Advance against the scheduled timeline so playback can catch up after lag.
+    stepCount = 0
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While Gif89aTimeReached(Gif89aItems(gifId).NextTick, tickNow)
+        nextFrame = Gif89aItems(gifId).CurrentFrame + 1
+
+        If nextFrame >= Gif89aItems(gifId).FrameCount Then
+            allowLoop = 0
+
+            Select Case Gif89aItems(gifId).LoopMode
+                Case GIF89A_LOOP_FOREVER
+                    allowLoop = -1
+
+                Case GIF89A_LOOP_ONCE
+                    allowLoop = 0
+
+                Case Else
+                    If Gif89aItems(gifId).FileLoopCount = 0 Then
+                        allowLoop = -1
+                    ElseIf Gif89aItems(gifId).LoopIteration < Gif89aItems(gifId).FileLoopCount Then
+                        allowLoop = -1
+                    End If
+            End Select
+
+            If allowLoop = 0 Then
+                Gif89aItems(gifId).CurrentFrame = Gif89aItems(gifId).FrameCount - 1
+                Gif89aItems(gifId).Playing = 0
+                Gif89aItems(gifId).Paused = 0
+                Gif89aItems(gifId).RemainingDelay = 0
+                N = Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame)
+                Exit Sub
+            End If
+
+            nextFrame = 0
+            If Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FILE_DEFAULT Then
+                If Gif89aItems(gifId).FileLoopCount > 0 Then
+                    Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+                End If
+            ElseIf Gif89aItems(gifId).LoopMode = GIF89A_LOOP_FOREVER Then
+                Gif89aItems(gifId).LoopIteration = Gif89aItems(gifId).LoopIteration + 1
+            End If
+        End If
+
+        Gif89aItems(gifId).CurrentFrame = nextFrame
+        If Gif89aEnsureFrameRendered(gifId, nextFrame) = 0 Then Exit Sub
+
+        frameSlot = Gif89aItems(gifId).FrameStart + nextFrame
+        delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+        Gif89aItems(gifId).NextTick = Gif89aTimeAdd(Gif89aItems(gifId).NextTick, delaySec)
+
+        stepCount = stepCount + 1
+        If stepCount >= 32 Then Exit Do
+    Loop
+End Sub
+
+' Purpose: Draw the current GIF89A frame to the active QB64 target.
+' Parameters: gifId = working value for GIF id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index.
+Sub Gif89aDraw (gifId As Long, x As Long, y As Long)
+    ' Variable: availWidth stores the width value used by this routine.
+    Dim availWidth As Long
+    ' Variable: availHeight stores the height value used by this routine.
+    Dim availHeight As Long
+    ' Variable: imageWidth stores the width value used by this routine.
+    Dim imageWidth As Long
+    ' Variable: imageHeight stores the height value used by this routine.
+    Dim imageHeight As Long
+    ' Variable: imageHandle stores the QB64 image handle used to store or draw decoded pixels.
+    Dim imageHandle As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageWidth = Gif89aItems(gifId).WidthPx
+    imageHeight = Gif89aItems(gifId).HeightPx
+    availWidth = _Width - x
+    availHeight = _Height - y
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+
+    If imageHandle > -2 Then Exit Sub
+    If imageWidth <= 0 Or imageHeight <= 0 Then Exit Sub
+    If availWidth <= 0 Or availHeight <= 0 Then Exit Sub
+
+    If imageWidth <= availWidth And imageHeight <= availHeight Then
+        _PutImage (x, y), imageHandle
+    Else
+        Gif89aDrawFit gifId, x, y, availWidth, availHeight
+    End If
+End Sub
+
+' Purpose: Draw the current GIF89A frame to the active QB64 target.
+' Parameters: gifId = working value for GIF id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index; boxWidth = width value used by this routine; boxHeight = height value used by this routine.
+Sub Gif89aDrawFit (gifId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    ' Variable: imageHandle stores the QB64 image handle used to store or draw decoded pixels.
+    Dim imageHandle As Long
+    ' Variable: srcWidth stores the width value used by this routine.
+    Dim srcWidth As Long
+    ' Variable: srcHeight stores the height value used by this routine.
+    Dim srcHeight As Long
+    ' Variable: drawWidth stores the width value used by this routine.
+    Dim drawWidth As Long
+    ' Variable: drawHeight stores the height value used by this routine.
+    Dim drawHeight As Long
+    ' Variable: offsetX stores the working value for offset x.
+    Dim offsetX As Long
+    ' Variable: offsetY stores the working value for offset y.
+    Dim offsetY As Long
+    ' Variable: scaleX stores the working value for scale x.
+    Dim scaleX As Double
+    ' Variable: scaleY stores the working value for scale y.
+    Dim scaleY As Double
+    ' Variable: scaleVal stores the working value for scale val.
+    Dim scaleVal As Double
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+    If imageHandle > -2 Then Exit Sub
+
+    srcWidth = Gif89aItems(gifId).WidthPx
+    srcHeight = Gif89aItems(gifId).HeightPx
+    If srcWidth <= 0 Or srcHeight <= 0 Then Exit Sub
+
+    scaleX = boxWidth / srcWidth
+    scaleY = boxHeight / srcHeight
+    scaleVal = scaleX
+    If scaleY < scaleVal Then scaleVal = scaleY
+    If scaleVal <= 0 Then Exit Sub
+
+    drawWidth = CLng(srcWidth * scaleVal)
+    drawHeight = CLng(srcHeight * scaleVal)
+    If drawWidth < 1 Then drawWidth = 1
+    If drawHeight < 1 Then drawHeight = 1
+
+    offsetX = x + (boxWidth - drawWidth) \ 2
+    offsetY = y + (boxHeight - drawHeight) \ 2
+
+    _PutImage (offsetX, offsetY)-(offsetX + drawWidth - 1, offsetY + drawHeight - 1), imageHandle, 0
+End Sub
+' Purpose: Draw the current GIF89A frame to the active QB64 target.
+' Parameters: gifId = working value for GIF id; x = horizontal pixel or coordinate index; y = vertical pixel or coordinate index; boxWidth = width value used by this routine; boxHeight = height value used by this routine.
+Sub Gif89aDrawStretch (gifId As Long, x As Long, y As Long, boxWidth As Long, boxHeight As Long)
+    ' Variable: imageHandle stores the QB64 image handle used to store or draw decoded pixels.
+    Dim imageHandle As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If Gif89aItems(gifId).FrameCount <= 0 Then Exit Sub
+    If boxWidth <= 0 Or boxHeight <= 0 Then Exit Sub
+    If Gif89aEnsureFrameRendered(gifId, Gif89aItems(gifId).CurrentFrame) = 0 Then Exit Sub
+
+    imageHandle = Gif89aItems(gifId).CanvasHandle
+    If imageHandle > -2 Then Exit Sub
+
+    _PutImage (x, y)-(x + boxWidth - 1, y + boxHeight - 1), imageHandle, 0
+End Sub
+
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A frame count.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aFrameCount& (gifId As Long)
+    Gif89aFrameCount = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aFrameCount = Gif89aItems(gifId).FrameCount
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A width.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aWidth& (gifId As Long)
+    Gif89aWidth = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aWidth = Gif89aItems(gifId).WidthPx
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A height.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aHeight& (gifId As Long)
+    Gif89aHeight = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aHeight = Gif89aItems(gifId).HeightPx
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A is playing.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aIsPlaying% (gifId As Long)
+    Gif89aIsPlaying = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aIsPlaying = Gif89aItems(gifId).Playing
+End Function
+
+' Purpose: Seek to a specific GIF89A frame or time position.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aSeekFrame% (gifId As Long, frameIndex As Long)
+    ' Variable: nowValue stores the working value for now value.
+    Dim nowValue As Double
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+
+    Gif89aSeekFrame = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    If Gif89aEnsureFrameRendered(gifId, frameIndex) = 0 Then Exit Function
+
+    delaySec = Gif89aFrameDelaySec(gifId, frameIndex)
+    If delaySec <= 0 Then delaySec = 1# / 30#
+
+    nowValue = Timer
+    Gif89aItems(gifId).CurrentFrame = frameIndex
+
+    If Gif89aItems(gifId).Playing Then
+        If Gif89aItems(gifId).Paused Then
+            Gif89aItems(gifId).RemainingDelay = delaySec
+            Gif89aItems(gifId).LastRawTimer = nowValue
+        Else
+            Gif89aItems(gifId).LastRawTimer = nowValue
+            Gif89aItems(gifId).NextTick = Gif89aTimeAdd(nowValue, delaySec)
+            Gif89aItems(gifId).RemainingDelay = 0
+        End If
+    Else
+        Gif89aItems(gifId).NextTick = 0
+        Gif89aItems(gifId).RemainingDelay = 0
+        Gif89aItems(gifId).LastRawTimer = 0
+    End If
+
+    Gif89aSeekFrame = -1
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A is loaded.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aIsLoaded% (gifId As Long)
+    Gif89aIsLoaded = Gif89aValidId(gifId)
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A format.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aFormat& (gifId As Long)
+    Gif89aFormat = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+
+    If Gif89aItems(gifId).Is89a <> 0 Then
+        Gif89aFormat = GIF89A_FMT_GIF89A
+    Else
+        Gif89aFormat = GIF89A_FMT_GIF87A
+    End If
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A error.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aError$ (gifId As Long)
+    Gif89aError = ""
+    If gifId < 0 Then Exit Function
+    If gifId > UBound(Gif89aErrorTexts) Then Exit Function
+    Gif89aError = Gif89aErrorTexts(gifId)
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A save frame.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item; fileName = string holding a file path or a human-readable name.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aSaveFrame% (gifId As Long, frameIndex As Long, fileName As String)
+    ' Variable: tempCanvas stores the working value for temp canvas.
+    Dim tempCanvas As Long
+    ' Variable: tempRestore stores the working value for temp restore.
+    Dim tempRestore As Long
+    ' Variable: frameLoop stores the working value for frame loop.
+    Dim frameLoop As Long
+    ' Variable: pixelCount stores the count used to size or iterate the current data set.
+    Dim pixelCount As Long
+
+    Gif89aSaveFrame = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    pixelCount = Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    If pixelCount <= 0 Then Exit Function
+
+    tempCanvas = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    tempRestore = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    If tempCanvas > -2 Or tempRestore > -2 Then
+        If tempCanvas < -1 Then _FreeImage tempCanvas
+        If tempRestore < -1 Then _FreeImage tempRestore
+        Exit Function
+    End If
+
+    Gif89aFillImage tempCanvas, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aFillImage tempRestore, pixelCount, Gif89aItems(gifId).BgColor
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For frameLoop = 0 To frameIndex
+        If frameLoop > 0 Then
+            Gif89aApplyDisposalToHandles gifId, frameLoop - 1, tempCanvas, tempRestore
+        End If
+        Gif89aRenderFrameToHandles gifId, frameLoop, tempCanvas, tempRestore
+    Next frameLoop
+
+    _SaveImage fileName, tempCanvas
+    Gif89aSaveFrame = -1
+
+    _FreeImage tempCanvas
+    _FreeImage tempRestore
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A current frame.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aCurrentFrame& (gifId As Long)
+    Gif89aCurrentFrame = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aCurrentFrame = Gif89aItems(gifId).CurrentFrame
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A clone frame image.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aCloneFrameImage& (gifId As Long, frameIndex As Long)
+    Gif89aCloneFrameImage = -1
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Function
+    If Gif89aEnsureFrameRendered(gifId, frameIndex) = 0 Then Exit Function
+    If Gif89aItems(gifId).CanvasHandle > -2 Then Exit Function
+    Gif89aCloneFrameImage = _CopyImage(Gif89aItems(gifId).CanvasHandle, 32)
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A frame delay sec.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aFrameDelaySec# (gifId As Long, frameIndex As Long)
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+
+    Gif89aFrameDelaySec = .1
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    frameSlot = Gif89aItems(gifId).FrameStart + frameIndex
+    delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+    If delaySec <= 0 Then delaySec = .01
+    Gif89aFrameDelaySec = delaySec
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A cache file loop count.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aCacheFileLoopCount& (gifId As Long)
+    Gif89aCacheFileLoopCount = 1
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    Gif89aCacheFileLoopCount = Gif89aItems(gifId).FileLoopCount
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A alloc slot.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aAllocSlot& ()
+    ' Variable: slotIndex stores the slot number inside the module-wide storage arrays.
+    Dim slotIndex As Long
+    ' Variable: upperIndex stores the index variable used to address the current item.
+    Dim upperIndex As Long
+    ' Variable: growTo stores the row pointer, row buffer, or row index used for image processing.
+    Dim growTo As Long
+
+    upperIndex = UBound(Gif89aItems)
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While slotIndex <= upperIndex
+        If Gif89aItems(slotIndex).Used = 0 Then
+            Gif89aAllocSlot = slotIndex
+            Exit Function
+        End If
+        slotIndex = slotIndex + 1
+    Loop
+
+    growTo = upperIndex + 8
+    If growTo < 1 Then growTo = 1
+    ' dynamic array: Gif89aItems is resized here to hold the dynamic table that stores one record per live object handled by this module.
+    ReDim _Preserve Gif89aItems(0 To growTo) As Gif89aStore
+    ' dynamic array: Gif89aRawData is resized here to hold the buffer that holds raw, packed, or decoded byte data.
+    ReDim _Preserve Gif89aRawData(0 To growTo) As String
+    ' dynamic array: Gif89aErrorTexts is resized here to hold the text storage for the last human-readable error message.
+    ReDim _Preserve Gif89aErrorTexts(0 To growTo) As String
+    Gif89aAllocSlot = upperIndex + 1
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A append frame slot.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aAppendFrameSlot& ()
+    ' Variable: newIndex stores the index variable used to address the current item.
+    Dim newIndex As Long
+    ' Variable: growTo stores the row pointer, row buffer, or row index used for image processing.
+    Dim growTo As Long
+
+    newIndex = Gif89aFrameTail
+    If newIndex > UBound(Gif89aFrames) Then
+        growTo = UBound(Gif89aFrames) + 128
+        If growTo < newIndex Then growTo = newIndex
+        ' dynamic array: Gif89aFrames is resized here to hold the dynamic array that stores per-frame data or cached frame metadata.
+        ReDim _Preserve Gif89aFrames(0 To growTo) As Gif89aFrameStore
+    End If
+
+    Gif89aFrameTail = newIndex + 1
+    Gif89aAppendFrameSlot = newIndex
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A valid id.
+' Parameters: gifId = working value for GIF id.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aValidId% (gifId As Long)
+    Gif89aValidId = 0
+    If gifId < 0 Then Exit Function
+    If gifId > UBound(Gif89aItems) Then Exit Function
+    If Gif89aItems(gifId).Used = 0 Then Exit Function
+    Gif89aValidId = -1
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A ensure decode scratch.
+' Parameters: pixelCount = count used to size or iterate the current data set.
+Sub Gif89aEnsureDecodeScratch (pixelCount As Long)
+    If pixelCount <= 0 Then Exit Sub
+
+    If UBound(Gif89aFrameIndexScratch) < pixelCount - 1 Then
+        ' dynamic array: Gif89aFrameIndexScratch is resized here to hold the working value for GIF89A frame index scratch.
+        ReDim Gif89aFrameIndexScratch(0 To pixelCount - 1) As Integer
+    End If
+
+    If UBound(Gif89aDrawIndexScratch) < pixelCount - 1 Then
+        ' dynamic array: Gif89aDrawIndexScratch is resized here to hold the working value for GIF89A draw index scratch.
+        ReDim Gif89aDrawIndexScratch(0 To pixelCount - 1) As Integer
+    End If
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A ensure LZW scratch.
+Sub Gif89aEnsureLzwScratch ()
+    If UBound(Gif89aDecodePrefix) < 4095 Then
+        ' dynamic array: Gif89aDecodePrefix is resized here to hold the working value for GIF89A decode prefix.
+        ReDim Gif89aDecodePrefix(0 To 4095) As Long
+    End If
+
+    If UBound(Gif89aDecodeSuffix) < 4095 Then
+        ' dynamic array: Gif89aDecodeSuffix is resized here to hold the working value for GIF89A decode suffix.
+        ReDim Gif89aDecodeSuffix(0 To 4095) As Integer
+    End If
+
+    If UBound(Gif89aDecodeStack) < 4095 Then
+        ' dynamic array: Gif89aDecodeStack is resized here to hold the working value for GIF89A decode stack.
+        ReDim Gif89aDecodeStack(0 To 4095) As Integer
+    End If
+
+    If UBound(Gif89aPaletteRgbaScratch) < 255 Then
+        ' dynamic array: Gif89aPaletteRgbaScratch is resized here to hold the palette storage or palette index used during indexed-color decoding.
+        ReDim Gif89aPaletteRgbaScratch(0 To 255) As _Unsigned Long
+    End If
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A reset render state.
+' Parameters: gifId = working value for GIF id.
+Sub Gif89aResetRenderState (gifId As Long)
+    ' Variable: pixelCount stores the count used to size or iterate the current data set.
+    Dim pixelCount As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    pixelCount = Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    If pixelCount <= 0 Then Exit Sub
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Then
+        Gif89aItems(gifId).CanvasHandle = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    End If
+    If Gif89aItems(gifId).RestoreHandle > -2 Then
+        Gif89aItems(gifId).RestoreHandle = _NewImage(Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, 32)
+    End If
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Then Exit Sub
+    If Gif89aItems(gifId).RestoreHandle > -2 Then Exit Sub
+
+    Gif89aFillImage Gif89aItems(gifId).CanvasHandle, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aFillImage Gif89aItems(gifId).RestoreHandle, pixelCount, Gif89aItems(gifId).BgColor
+    Gif89aItems(gifId).RenderedFrame = -1
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A count snapshots.
+' Parameters: frameCount = total number of frames available for the current animation; intervalValue = working value for interval value.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aCountSnapshots& (frameCount As Long, intervalValue As Long)
+    If frameCount <= 0 Or intervalValue <= 0 Then
+        Gif89aCountSnapshots = 0
+        Exit Function
+    End If
+
+    Gif89aCountSnapshots = ((frameCount - 1) \ intervalValue) + 1
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A alloc snapshot meta block.
+' Parameters: snapshotCount = count used to size or iterate the current data set.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aAllocSnapshotMetaBlock& (snapshotCount As Long)
+    ' Variable: startIndex stores the index variable used to address the current item.
+    Dim startIndex As Long
+    ' Variable: neededTop stores the working value for needed top.
+    Dim neededTop As Long
+    ' Variable: newCapacity stores the working value for new capacity.
+    Dim newCapacity As Long
+    ' Variable: snapshotIndex stores the index variable used to address the current item.
+    Dim snapshotIndex As Long
+
+    Gif89aAllocSnapshotMetaBlock = -1
+    If snapshotCount <= 0 Then Exit Function
+
+    startIndex = Gif89aSnapshotMetaNext
+    neededTop = startIndex + snapshotCount
+    If neededTop > Gif89aSnapshotMetaCapacity Then
+        newCapacity = Gif89aSnapshotMetaCapacity
+        If newCapacity < 16 Then newCapacity = 16
+        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+        Do While newCapacity < neededTop
+            newCapacity = newCapacity * 2
+        Loop
+        ' dynamic array: Gif89aSnapshotMeta is resized here to hold the working value for GIF89A snapshot meta.
+        ReDim _Preserve Gif89aSnapshotMeta(newCapacity - 1) As Gif89aSnapshotStore
+        Gif89aSnapshotMetaCapacity = newCapacity
+    End If
+
+    ' Loop purpose: use snapshotIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For snapshotIndex = 0 To snapshotCount - 1
+        Gif89aSnapshotMeta(startIndex + snapshotIndex).Used = 0
+        Gif89aSnapshotMeta(startIndex + snapshotIndex).FrameIndex = -1
+        Gif89aSnapshotMeta(startIndex + snapshotIndex).CanvasHandle = 0
+        Gif89aSnapshotMeta(startIndex + snapshotIndex).RestoreHandle = 0
+    Next snapshotIndex
+
+    Gif89aSnapshotMetaNext = startIndex + snapshotCount
+    Gif89aAllocSnapshotMetaBlock = startIndex
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A snapshot slot index.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aSnapshotSlotIndex& (gifId As Long, frameIndex As Long)
+    ' Variable: intervalValue stores the working value for interval value.
+    Dim intervalValue As Long
+    ' Variable: slotOffset stores the working value for slot offset.
+    Dim slotOffset As Long
+
+    Gif89aSnapshotSlotIndex = -1
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+
+    intervalValue = Gif89aItems(gifId).SnapshotInterval
+    If intervalValue <= 0 Then Exit Function
+    If (frameIndex Mod intervalValue) <> 0 Then Exit Function
+
+    slotOffset = frameIndex \ intervalValue
+    If slotOffset < 0 Then Exit Function
+    If slotOffset >= Gif89aItems(gifId).SnapshotCount Then Exit Function
+
+    Gif89aSnapshotSlotIndex = Gif89aItems(gifId).SnapshotMetaStart + slotOffset
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A maybe store snapshot.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item.
+Sub Gif89aMaybeStoreSnapshot (gifId As Long, frameIndex As Long)
+    ' Variable: snapshotSlot stores the slot number inside the module-wide storage arrays.
+    Dim snapshotSlot As Long
+    ' Variable: canvasCopy stores the working value for canvas copy.
+    Dim canvasCopy As Long
+    ' Variable: restoreCopy stores the working value for restore copy.
+    Dim restoreCopy As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    snapshotSlot = Gif89aSnapshotSlotIndex(gifId, frameIndex)
+    If snapshotSlot < 0 Then Exit Sub
+    If Gif89aSnapshotMeta(snapshotSlot).Used Then Exit Sub
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Then Exit Sub
+    If Gif89aItems(gifId).RestoreHandle > -2 Then Exit Sub
+
+    canvasCopy = _CopyImage(Gif89aItems(gifId).CanvasHandle, 32)
+    restoreCopy = _CopyImage(Gif89aItems(gifId).RestoreHandle, 32)
+    If canvasCopy > -2 Or restoreCopy > -2 Then
+        If canvasCopy <= -2 Then _FreeImage canvasCopy: canvasCopy = 0
+        If restoreCopy <= -2 Then _FreeImage restoreCopy: restoreCopy = 0
+        Exit Sub
+    End If
+
+    Gif89aSnapshotMeta(snapshotSlot).CanvasHandle = canvasCopy
+    Gif89aSnapshotMeta(snapshotSlot).RestoreHandle = restoreCopy
+    Gif89aSnapshotMeta(snapshotSlot).FrameIndex = frameIndex
+    Gif89aSnapshotMeta(snapshotSlot).Used = -1
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A restore nearest snapshot.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item; restoredFrame = working value for restored frame.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aRestoreNearestSnapshot% (gifId As Long, frameIndex As Long, restoredFrame As Long)
+    ' Variable: intervalValue stores the working value for interval value.
+    Dim intervalValue As Long
+    ' Variable: slotOffset stores the working value for slot offset.
+    Dim slotOffset As Long
+    ' Variable: snapshotSlot stores the slot number inside the module-wide storage arrays.
+    Dim snapshotSlot As Long
+
+    Gif89aRestoreNearestSnapshot = 0
+    restoredFrame = -1
+
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If frameIndex < 0 Then Exit Function
+
+    intervalValue = Gif89aItems(gifId).SnapshotInterval
+    If intervalValue <= 0 Then Exit Function
+
+    slotOffset = frameIndex \ intervalValue
+    If slotOffset >= Gif89aItems(gifId).SnapshotCount Then slotOffset = Gif89aItems(gifId).SnapshotCount - 1
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While slotOffset >= 0
+        snapshotSlot = Gif89aItems(gifId).SnapshotMetaStart + slotOffset
+        If Gif89aSnapshotMeta(snapshotSlot).Used Then
+            If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then Exit Function
+            Gif89aCopyImagePixels Gif89aSnapshotMeta(snapshotSlot).CanvasHandle, Gif89aItems(gifId).CanvasHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+            Gif89aCopyImagePixels Gif89aSnapshotMeta(snapshotSlot).RestoreHandle, Gif89aItems(gifId).RestoreHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+            restoredFrame = Gif89aSnapshotMeta(snapshotSlot).FrameIndex
+            Gif89aItems(gifId).RenderedFrame = restoredFrame
+            Gif89aRestoreNearestSnapshot = -1
+            Exit Function
+        End If
+        slotOffset = slotOffset - 1
+    Loop
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A ensure frame rendered.
+' Parameters: gifId = working value for GIF id; targetFrame = working value for target frame.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aEnsureFrameRendered% (gifId As Long, targetFrame As Long)
+    ' Variable: frameLoop stores the working value for frame loop.
+    Dim frameLoop As Long
+    ' Variable: startFrame stores the working value for start frame.
+    Dim startFrame As Long
+
+    Gif89aEnsureFrameRendered = 0
+    If Gif89aValidId(gifId) = 0 Then Exit Function
+    If targetFrame < 0 Then Exit Function
+    If targetFrame >= Gif89aItems(gifId).FrameCount Then Exit Function
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then
+        Gif89aResetRenderState gifId
+    End If
+
+    If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then Exit Function
+
+    If targetFrame = Gif89aItems(gifId).RenderedFrame Then
+        Gif89aEnsureFrameRendered = -1
+        Exit Function
+    End If
+
+    If targetFrame < Gif89aItems(gifId).RenderedFrame Then
+        If Gif89aRestoreNearestSnapshot(gifId, targetFrame, startFrame) <> 0 Then
+            startFrame = startFrame + 1
+        Else
+            Gif89aResetRenderState gifId
+            If Gif89aItems(gifId).CanvasHandle > -2 Or Gif89aItems(gifId).RestoreHandle > -2 Then Exit Function
+            startFrame = 0
+        End If
+    Else
+        startFrame = Gif89aItems(gifId).RenderedFrame + 1
+        If startFrame < 0 Then startFrame = 0
+    End If
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For frameLoop = startFrame To targetFrame
+        If frameLoop > 0 Then
+            Gif89aApplyDisposalToHandles gifId, frameLoop - 1, Gif89aItems(gifId).CanvasHandle, Gif89aItems(gifId).RestoreHandle
+        End If
+        Gif89aRenderFrameToHandles gifId, frameLoop, Gif89aItems(gifId).CanvasHandle, Gif89aItems(gifId).RestoreHandle
+        Gif89aItems(gifId).RenderedFrame = frameLoop
+        Gif89aMaybeStoreSnapshot gifId, frameLoop
+    Next frameLoop
+
+    Gif89aEnsureFrameRendered = -1
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A apply disposal to handles.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item; canvasHandle = handle used to reference an external or QB64 resource; restoreHandle = handle used to reference an external or QB64 resource.
+Sub Gif89aApplyDisposalToHandles (gifId As Long, frameIndex As Long, canvasHandle As Long, restoreHandle As Long)
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: fillColor stores the column index or color-related value.
+    Dim fillColor As _Unsigned Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If frameIndex < 0 Then Exit Sub
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Sub
+
+    frameSlot = Gif89aItems(gifId).FrameStart + frameIndex
+    fillColor = Gif89aItems(gifId).BgColor
+
+    Select Case Gif89aFrames(frameSlot).Disposal
+        Case 2
+            Gif89aClearRectInImage canvasHandle, Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, Gif89aFrames(frameSlot).LeftPx, Gif89aFrames(frameSlot).TopPx, Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx, fillColor
+        Case 3
+            Gif89aCopyImagePixels restoreHandle, canvasHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    End Select
+End Sub
+
+' Purpose: Render or composite a GIF89A frame into the output image.
+' Parameters: gifId = working value for GIF id; frameIndex = index variable used to address the current item; canvasHandle = handle used to reference an external or QB64 resource; restoreHandle = handle used to reference an external or QB64 resource.
+Sub Gif89aRenderFrameToHandles (gifId As Long, frameIndex As Long, canvasHandle As Long, restoreHandle As Long)
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+    ' Variable: palOfs stores the working value for pal ofs.
+    Dim palOfs As Long
+    ' Variable: palCount stores the count used to size or iterate the current data set.
+    Dim palCount As Long
+    ' Variable: pixelCount stores the count used to size or iterate the current data set.
+    Dim pixelCount As Long
+    ' Variable: i stores the general-purpose loop index.
+    Dim i As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+    If frameIndex < 0 Then Exit Sub
+    If frameIndex >= Gif89aItems(gifId).FrameCount Then Exit Sub
+
+    frameSlot = Gif89aItems(gifId).FrameStart + frameIndex
+
+    If Gif89aFrames(frameSlot).Disposal = 3 Then
+        Gif89aCopyImagePixels canvasHandle, restoreHandle, Gif89aItems(gifId).WidthPx * Gif89aItems(gifId).HeightPx
+    End If
+
+    pixelCount = Gif89aFrames(frameSlot).WidthPx * Gif89aFrames(frameSlot).HeightPx
+    If pixelCount <= 0 Then Exit Sub
+
+    Gif89aEnsureLzwScratch
+    Gif89aEnsureDecodeScratch pixelCount
+
+    If Gif89aFrames(frameSlot).LocalTableFlag <> 0 Then
+        palOfs = Gif89aFrames(frameSlot).LocalTableOfs
+        palCount = Gif89aFrames(frameSlot).LocalTableCount
+    Else
+        palOfs = Gif89aItems(gifId).GlobalTableOfs
+        palCount = Gif89aItems(gifId).GlobalTableCount
+    End If
+
+    If palOfs > 0 And palCount > 0 Then
+        Gif89aReadColorTableRgba Gif89aRawData(gifId), palOfs, palCount, Gif89aPaletteRgbaScratch()
+    Else
+        ' Loop purpose: use i as a counter/index while the routine processes a repeated set of values.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For i = 0 To 255
+            Gif89aPaletteRgbaScratch(i) = _RGBA32(0, 0, 0, 255)
+        Next i
+    End If
+
+    Gif89aLzwDecodeFromBlocks Gif89aRawData(gifId), Gif89aFrames(frameSlot).ImageDataOfs, Gif89aFrames(frameSlot).LzwMinCodeSize, pixelCount, Gif89aFrameIndexScratch()
+
+    If Gif89aFrames(frameSlot).Interlaced <> 0 Then
+        Gif89aDeinterlace Gif89aFrameIndexScratch(), Gif89aDrawIndexScratch(), Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx
+        Gif89aBlitFrameToImageRgba canvasHandle, Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, Gif89aFrames(frameSlot).LeftPx, Gif89aFrames(frameSlot).TopPx, Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx, Gif89aDrawIndexScratch(), Gif89aPaletteRgbaScratch(), Gif89aFrames(frameSlot).TransparentFlag, Gif89aFrames(frameSlot).TransparentIndex
+    Else
+        Gif89aBlitFrameToImageRgba canvasHandle, Gif89aItems(gifId).WidthPx, Gif89aItems(gifId).HeightPx, Gif89aFrames(frameSlot).LeftPx, Gif89aFrames(frameSlot).TopPx, Gif89aFrames(frameSlot).WidthPx, Gif89aFrames(frameSlot).HeightPx, Gif89aFrameIndexScratch(), Gif89aPaletteRgbaScratch(), Gif89aFrames(frameSlot).TransparentFlag, Gif89aFrames(frameSlot).TransparentIndex
+    End If
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A fill image.
+' Parameters: imageHandle = QB64 image handle used to store or draw decoded pixels; pixelCount = count used to size or iterate the current data set; fillColor = column index or color-related value.
+Sub Gif89aFillImage (imageHandle As Long, pixelCount As Long, fillColor As _Unsigned Long)
+    ' Variable: mem stores the memory handle or memory-related helper value.
+    Dim mem As _MEM
+    ' Variable: pixelIndex stores the index variable used to address the current item.
+    Dim pixelIndex As Long
+    ' Variable: byteIndex stores the index variable used to address the current item.
+    Dim byteIndex As _Offset
+
+    If imageHandle > -2 Then Exit Sub
+    If pixelCount <= 0 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+    byteIndex = mem.OFFSET
+
+    ' Loop purpose: use pixelIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For pixelIndex = 0 To pixelCount - 1
+        _MemPut mem, byteIndex, fillColor As _UNSIGNED LONG
+        byteIndex = byteIndex + 4
+    Next pixelIndex
+
+    If _MemExists(mem) Then _MemFree mem
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A copy image pixels.
+' Parameters: srcHandle = handle used to reference an external or QB64 resource; dstHandle = handle used to reference an external or QB64 resource; pixelCount = count used to size or iterate the current data set.
+Sub Gif89aCopyImagePixels (srcHandle As Long, dstHandle As Long, pixelCount As Long)
+    If srcHandle > -2 Then Exit Sub
+    If dstHandle > -2 Then Exit Sub
+    If pixelCount <= 0 Then Exit Sub
+
+    _PutImage (0, 0), srcHandle, dstHandle
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A clear rect in image.
+' Parameters: imageHandle = QB64 image handle used to store or draw decoded pixels; screenWidth = width value used by this routine; screenHeight = height value used by this routine; leftPx = working value for left px; topPx = working value for top px; frameWidth = width value used by this routine; additional parameters continue the same pattern.
+Sub Gif89aClearRectInImage (imageHandle As Long, screenWidth As Long, screenHeight As Long, leftPx As Long, topPx As Long, frameWidth As Long, frameHeight As Long, fillColor As _Unsigned Long)
+    ' Variable: mem stores the memory handle or memory-related helper value.
+    Dim mem As _MEM
+    ' Variable: x stores the horizontal pixel or coordinate index.
+    Dim x As Long
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: dstX stores the working value for dst x.
+    Dim dstX As Long
+    ' Variable: dstY stores the working value for dst y.
+    Dim dstY As Long
+    ' Variable: byteIndex stores the index variable used to address the current item.
+    Dim byteIndex As _Offset
+
+    If imageHandle > -2 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 0 To frameHeight - 1
+        dstY = topPx + y
+        If dstY >= 0 And dstY < screenHeight Then
+            ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For x = 0 To frameWidth - 1
+                dstX = leftPx + x
+                If dstX >= 0 And dstX < screenWidth Then
+                    byteIndex = mem.OFFSET + ((dstY * screenWidth + dstX) * 4)
+                    _MemPut mem, byteIndex, fillColor As _UNSIGNED LONG
+                End If
+            Next x
+        End If
+    Next y
+
+    If _MemExists(mem) Then _MemFree mem
+End Sub
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A blit frame to image RGBA.
+' Parameters: imageHandle = QB64 image handle used to store or draw decoded pixels; screenWidth = width value used by this routine; screenHeight = height value used by this routine; leftPx = working value for left px; topPx = working value for top px; frameWidth = width value used by this routine; additional parameters continue the same pattern.
+Sub Gif89aBlitFrameToImageRgba (imageHandle As Long, screenWidth As Long, screenHeight As Long, leftPx As Long, topPx As Long, frameWidth As Long, frameHeight As Long, decodedIndex() As Integer, palRgba() As _Unsigned Long, transparentFlag As Integer, transparentIndex As Integer)
+    ' Variable: mem stores the memory handle or memory-related helper value.
+    Dim mem As _MEM
+    ' Variable: x stores the horizontal pixel or coordinate index.
+    Dim x As Long
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: frameScan stores the working value for frame scan.
+    Dim frameScan As Long
+    ' Variable: dstX stores the working value for dst x.
+    Dim dstX As Long
+    ' Variable: dstY stores the working value for dst y.
+    Dim dstY As Long
+    ' Variable: byteIndex stores the index variable used to address the current item.
+    Dim byteIndex As _Offset
+    ' Variable: colorIndex stores the index variable used to address the current item.
+    Dim colorIndex As Integer
+    ' Variable: rgbaValue stores the color component or packed color helper used during image conversion.
+    Dim rgbaValue As _Unsigned Long
+
+    If imageHandle > -2 Then Exit Sub
+
+    mem = _MemImage(imageHandle)
+    frameScan = 0
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 0 To frameHeight - 1
+        dstY = topPx + y
+        If dstY >= 0 And dstY < screenHeight Then
+            ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+            ' The loop order matters because later statements expect the data to be visited sequentially.
+            For x = 0 To frameWidth - 1
+                dstX = leftPx + x
+                If dstX >= 0 And dstX < screenWidth Then
+                    colorIndex = decodedIndex(frameScan)
+                    If transparentFlag = 0 Or colorIndex <> transparentIndex Then
+                        rgbaValue = palRgba(colorIndex)
+                        byteIndex = mem.OFFSET + ((dstY * screenWidth + dstX) * 4)
+                        _MemPut mem, byteIndex, rgbaValue As _UNSIGNED LONG
+                    End If
+                End If
+                frameScan = frameScan + 1
+            Next x
+        Else
+            frameScan = frameScan + frameWidth
+        End If
+    Next y
+
+    If _MemExists(mem) Then _MemFree mem
+End Sub
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aReadByte% (rawData As String, ofs As Long)
+    If ofs < 1 Or ofs > Len(rawData) Then
+        Gif89aReadByte = 0
+    Else
+        Gif89aReadByte = Asc(Mid$(rawData, ofs, 1))
+    End If
+    ofs = ofs + 1
+End Function
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aReadWord& (rawData As String, ofs As Long)
+    ' Variable: loByte stores the working value for lo byte.
+    Dim loByte As Integer
+    ' Variable: hiByte stores the working value for hi byte.
+    Dim hiByte As Integer
+
+    loByte = Gif89aReadByte(rawData, ofs)
+    hiByte = Gif89aReadByte(rawData, ofs)
+    Gif89aReadWord = loByte Or _ShL(hiByte, 8)
+End Function
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aReadSubBlocks$ (rawData As String, ofs As Long)
+    ' Variable: blockLen stores the working value for block len.
+    Dim blockLen As Integer
+    ' Variable: resultText stores the working value for result text.
+    Dim resultText As String
+
+    resultText = ""
+    ' Loop purpose: repeat this block until an internal exit condition decides that the current stage is complete.
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+        If ofs + blockLen - 1 > Len(rawData) Then Exit Do
+        resultText = resultText + Mid$(rawData, ofs, blockLen)
+        ofs = ofs + blockLen
+    Loop
+
+    Gif89aReadSubBlocks = resultText
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A skip sub blocks.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data.
+Sub Gif89aSkipSubBlocks (rawData As String, ofs As Long)
+    ' Variable: blockLen stores the working value for block len.
+    Dim blockLen As Integer
+
+    ' Loop purpose: repeat this block until an internal exit condition decides that the current stage is complete.
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+        ofs = ofs + blockLen
+        If ofs > Len(rawData) + 1 Then Exit Do
+    Loop
+End Sub
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data; colorCount = column index or color-related value; palR = working value for pal r; palG = working value for pal g; palB = working value for pal b.
+Sub Gif89aReadColorTable (rawData As String, ofs As Long, colorCount As Long, palR() As Integer, palG() As Integer, palB() As Integer)
+    ' Variable: colorIndex stores the index variable used to address the current item.
+    Dim colorIndex As Long
+
+    ' Loop purpose: use colorIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For colorIndex = 0 To colorCount - 1
+        palR(colorIndex) = Gif89aReadByte(rawData, ofs)
+        palG(colorIndex) = Gif89aReadByte(rawData, ofs)
+        palB(colorIndex) = Gif89aReadByte(rawData, ofs)
+    Next colorIndex
+End Sub
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data; colorCount = column index or color-related value; palRgba = color component or packed color helper used during image conversion.
+Sub Gif89aReadColorTableRgba (rawData As String, ofs As Long, colorCount As Long, palRgba() As _Unsigned Long)
+    ' Variable: colorIndex stores the index variable used to address the current item.
+    Dim colorIndex As Long
+    ' Variable: redValue stores the working value for red value.
+    Dim redValue As Integer
+    ' Variable: greenValue stores the working value for green value.
+    Dim greenValue As Integer
+    ' Variable: blueValue stores the working value for blue value.
+    Dim blueValue As Integer
+
+    ' Loop purpose: use colorIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For colorIndex = 0 To 255
+        palRgba(colorIndex) = _RGBA32(0, 0, 0, 255)
+    Next colorIndex
+
+    ' Loop purpose: use colorIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For colorIndex = 0 To colorCount - 1
+        redValue = Gif89aReadByte(rawData, ofs)
+        greenValue = Gif89aReadByte(rawData, ofs)
+        blueValue = Gif89aReadByte(rawData, ofs)
+        palRgba(colorIndex) = _RGBA32(redValue, greenValue, blueValue, 255)
+    Next colorIndex
+End Sub
+
+' Purpose: Decode GIF89A image data into an indexed or final pixel buffer.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; imageDataOfs = buffer that holds raw, packed, or decoded byte data; minCodeSize = minimum allowed code size; expectedSize = working value for expected size; decodedIndex = index variable used to address the current item.
+Sub Gif89aLzwDecodeFromBlocks (rawData As String, imageDataOfs As Long, minCodeSize As Integer, expectedSize As Long, decodedIndex() As Integer)
+    ' Variable: clearCode stores the working value for clear code.
+    Dim clearCode As Long
+    ' Variable: endCode stores the working value for end code.
+    Dim endCode As Long
+    ' Variable: nextCode stores the working value for next code.
+    Dim nextCode As Long
+    ' Variable: codeSize stores the working value for code size.
+    Dim codeSize As Integer
+    ' Variable: codeLimit stores the working value for code limit.
+    Dim codeLimit As Long
+    ' Variable: bitBuffer stores the buffer that holds raw, packed, or decoded byte data.
+    Dim bitBuffer As Long
+    ' Variable: bitsInBuffer stores the buffer that holds raw, packed, or decoded byte data.
+    Dim bitsInBuffer As Integer
+    ' Variable: oldCode stores the working value for old code.
+    Dim oldCode As Long
+    ' Variable: code stores the working value for code.
+    Dim code As Long
+    ' Variable: inCode stores the working value for in code.
+    Dim inCode As Long
+    ' Variable: firstValue stores the working value for first value.
+    Dim firstValue As Integer
+    ' Variable: outCount stores the count used to size or iterate the current data set.
+    Dim outCount As Long
+    ' Variable: stackCount stores the count used to size or iterate the current data set.
+    Dim stackCount As Long
+    ' Variable: scanIndex stores the index variable used to address the current item.
+    Dim scanIndex As Long
+    ' Variable: dataLen stores the buffer that holds raw, packed, or decoded byte data.
+    Dim dataLen As Long
+    ' Variable: ofs stores the current offset into packed or unpacked data.
+    Dim ofs As Long
+    ' Variable: blockRemain stores the working value for block remain.
+    Dim blockRemain As Long
+    ' Variable: sourceByte stores the working value for source byte.
+    Dim sourceByte As Integer
+    ' Variable: codeMask stores the working value for code mask.
+    Dim codeMask As Long
+    ' Variable: streamEnded stores the working value for stream ended.
+    Dim streamEnded As Integer
+
+    clearCode = _ShL(1, minCodeSize)
+    endCode = clearCode + 1
+    nextCode = endCode + 1
+    codeSize = minCodeSize + 1
+    codeLimit = _ShL(1, codeSize)
+    codeMask = codeLimit - 1
+    bitBuffer = 0
+    bitsInBuffer = 0
+    oldCode = -1
+    firstValue = 0
+    outCount = 0
+    dataLen = Len(rawData)
+    ofs = imageDataOfs
+    blockRemain = 0
+    streamEnded = 0
+
+    ' Loop purpose: use scanIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For scanIndex = 0 To clearCode - 1
+        Gif89aDecodePrefix(scanIndex) = -1
+        Gif89aDecodeSuffix(scanIndex) = scanIndex
+    Next scanIndex
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While outCount < expectedSize
+        ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+        Do While bitsInBuffer < codeSize
+            If blockRemain <= 0 Then
+                If ofs > dataLen Then
+                    streamEnded = -1
+                    Exit Do
+                End If
+
+                blockRemain = Gif89aReadByte(rawData, ofs)
+                If blockRemain <= 0 Then
+                    streamEnded = -1
+                    Exit Do
+                End If
+            End If
+
+            If ofs > dataLen Then
+                streamEnded = -1
+                Exit Do
+            End If
+
+            sourceByte = Gif89aReadByte(rawData, ofs)
+            blockRemain = blockRemain - 1
+            bitBuffer = bitBuffer Or _ShL(sourceByte, bitsInBuffer)
+            bitsInBuffer = bitsInBuffer + 8
+        Loop
+
+        If streamEnded <> 0 Then Exit Do
+
+        code = bitBuffer And codeMask
+        bitBuffer = bitBuffer \ _ShL(1, codeSize)
+        bitsInBuffer = bitsInBuffer - codeSize
+
+        If code = clearCode Then
+            codeSize = minCodeSize + 1
+            codeLimit = _ShL(1, codeSize)
+            codeMask = codeLimit - 1
+            nextCode = endCode + 1
+            oldCode = -1
+
+            ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+            Do While bitsInBuffer < codeSize
+                If blockRemain <= 0 Then
+                    If ofs > dataLen Then
+                        streamEnded = -1
+                        Exit Do
+                    End If
+
+                    blockRemain = Gif89aReadByte(rawData, ofs)
+                    If blockRemain <= 0 Then
+                        streamEnded = -1
+                        Exit Do
+                    End If
+                End If
+
+                If ofs > dataLen Then
+                    streamEnded = -1
+                    Exit Do
+                End If
+
+                sourceByte = Gif89aReadByte(rawData, ofs)
+                blockRemain = blockRemain - 1
+                bitBuffer = bitBuffer Or _ShL(sourceByte, bitsInBuffer)
+                bitsInBuffer = bitsInBuffer + 8
+            Loop
+
+            If streamEnded <> 0 Then Exit Do
+
+            code = bitBuffer And codeMask
+            bitBuffer = bitBuffer \ _ShL(1, codeSize)
+            bitsInBuffer = bitsInBuffer - codeSize
+
+            If code = endCode Then Exit Do
+            If code < 0 Then Exit Do
+            If outCount < expectedSize Then
+                decodedIndex(outCount) = code And 255
+                outCount = outCount + 1
+            End If
+            firstValue = code And 255
+            oldCode = code
+        ElseIf code = endCode Then
+            Exit Do
+        Else
+            If oldCode = -1 Then
+                If outCount < expectedSize Then
+                    decodedIndex(outCount) = code And 255
+                    outCount = outCount + 1
+                End If
+                firstValue = code And 255
+                oldCode = code
+            Else
+                inCode = code
+                stackCount = 0
+
+                If code >= nextCode Then
+                    Gif89aDecodeStack(stackCount) = firstValue
+                    stackCount = stackCount + 1
+                    code = oldCode
+                End If
+
+                ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                Do While code >= clearCode
+                    Gif89aDecodeStack(stackCount) = Gif89aDecodeSuffix(code)
+                    stackCount = stackCount + 1
+                    code = Gif89aDecodePrefix(code)
+                    If code < 0 Then Exit Do
+                Loop
+
+                If code < 0 Then Exit Do
+
+                firstValue = Gif89aDecodeSuffix(code)
+                Gif89aDecodeStack(stackCount) = firstValue
+                stackCount = stackCount + 1
+
+                ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                Do While stackCount > 0 And outCount < expectedSize
+                    stackCount = stackCount - 1
+                    decodedIndex(outCount) = Gif89aDecodeStack(stackCount)
+                    outCount = outCount + 1
+                Loop
+
+                If nextCode < 4096 Then
+                    Gif89aDecodePrefix(nextCode) = oldCode
+                    Gif89aDecodeSuffix(nextCode) = firstValue
+                    nextCode = nextCode + 1
+                    If nextCode >= codeLimit And codeSize < 12 Then
+                        codeSize = codeSize + 1
+                        codeLimit = _ShL(1, codeSize)
+                        codeMask = codeLimit - 1
+                    End If
+                End If
+
+                oldCode = inCode
+            End If
+        End If
+    Loop
+
+    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For scanIndex = outCount To expectedSize - 1
+        decodedIndex(scanIndex) = 0
+    Next scanIndex
+End Sub
+
+' Purpose: Decode GIF89A image data into an indexed or final pixel buffer.
+' Parameters: packedData = buffer that holds raw, packed, or decoded byte data; minCodeSize = minimum allowed code size; expectedSize = working value for expected size; decodedIndex = index variable used to address the current item.
+Sub Gif89aLzwDecode (packedData As String, minCodeSize As Integer, expectedSize As Long, decodedIndex() As Integer)
+    ' Variable: clearCode stores the working value for clear code.
+    Dim clearCode As Long
+    ' Variable: endCode stores the working value for end code.
+    Dim endCode As Long
+    ' Variable: nextCode stores the working value for next code.
+    Dim nextCode As Long
+    ' Variable: codeSize stores the working value for code size.
+    Dim codeSize As Integer
+    ' Variable: codeLimit stores the working value for code limit.
+    Dim codeLimit As Long
+    ' Variable: bitIndex stores the index variable used to address the current item.
+    Dim bitIndex As Long
+    ' Variable: oldCode stores the working value for old code.
+    Dim oldCode As Long
+    ' Variable: code stores the working value for code.
+    Dim code As Long
+    ' Variable: inCode stores the working value for in code.
+    Dim inCode As Long
+    ' Variable: firstValue stores the working value for first value.
+    Dim firstValue As Integer
+    ' Variable: outCount stores the count used to size or iterate the current data set.
+    Dim outCount As Long
+    ' Variable: stackCount stores the count used to size or iterate the current data set.
+    Dim stackCount As Long
+    ' Variable: scanIndex stores the index variable used to address the current item.
+    Dim scanIndex As Long
+    ' dynamic array: prefix is resized here to hold the working value for prefix.
+    ReDim prefix(0 To 4095) As Long
+    ' dynamic array: suffix is resized here to hold the working value for suffix.
+    ReDim suffix(0 To 4095) As Integer
+    ' dynamic array: stack is resized here to hold the working value for stack.
+    ReDim stack(0 To 4095) As Integer
+
+    clearCode = _ShL(1, minCodeSize)
+    endCode = clearCode + 1
+    nextCode = endCode + 1
+    codeSize = minCodeSize + 1
+    codeLimit = _ShL(1, codeSize)
+    bitIndex = 0
+    oldCode = -1
+    firstValue = 0
+    outCount = 0
+
+    ' Loop purpose: use scanIndex as a counter/index while the routine processes a repeated set of values.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For scanIndex = 0 To clearCode - 1
+        prefix(scanIndex) = -1
+        suffix(scanIndex) = scanIndex
+    Next scanIndex
+
+    ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+    Do While outCount < expectedSize
+        code = Gif89aReadCode(packedData, bitIndex, codeSize)
+
+        If code = clearCode Then
+            codeSize = minCodeSize + 1
+            codeLimit = _ShL(1, codeSize)
+            nextCode = endCode + 1
+            oldCode = -1
+
+            code = Gif89aReadCode(packedData, bitIndex, codeSize)
+            If code = endCode Then Exit Do
+            If code < 0 Then Exit Do
+            If outCount < expectedSize Then
+                decodedIndex(outCount) = code And 255
+                outCount = outCount + 1
+            End If
+            firstValue = code And 255
+            oldCode = code
+        ElseIf code = endCode Then
+            Exit Do
+        Else
+            If oldCode = -1 Then
+                If outCount < expectedSize Then
+                    decodedIndex(outCount) = code And 255
+                    outCount = outCount + 1
+                End If
+                firstValue = code And 255
+                oldCode = code
+            Else
+                inCode = code
+                stackCount = 0
+
+                If code >= nextCode Then
+                    stack(stackCount) = firstValue
+                    stackCount = stackCount + 1
+                    code = oldCode
+                End If
+
+                ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                Do While code >= clearCode
+                    stack(stackCount) = suffix(code)
+                    stackCount = stackCount + 1
+                    code = prefix(code)
+                    If code < 0 Then Exit Do
+                Loop
+
+                If code < 0 Then Exit Do
+
+                firstValue = suffix(code)
+                stack(stackCount) = firstValue
+                stackCount = stackCount + 1
+
+                ' Loop purpose: keep processing until the controlling condition becomes false, usually while input or timing remains active.
+                Do While stackCount > 0 And outCount < expectedSize
+                    stackCount = stackCount - 1
+                    decodedIndex(outCount) = stack(stackCount)
+                    outCount = outCount + 1
+                Loop
+
+                If nextCode < 4096 Then
+                    prefix(nextCode) = oldCode
+                    suffix(nextCode) = firstValue
+                    nextCode = nextCode + 1
+                    If nextCode >= codeLimit And codeSize < 12 Then
+                        codeSize = codeSize + 1
+                        codeLimit = _ShL(1, codeSize)
+                    End If
+                End If
+
+                oldCode = inCode
+            End If
+        End If
+    Loop
+
+    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For scanIndex = outCount To expectedSize - 1
+        decodedIndex(scanIndex) = 0
+    Next scanIndex
+End Sub
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: packedData = buffer that holds raw, packed, or decoded byte data; bitIndex = index variable used to address the current item; codeSize = working value for code size.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aReadCode& (packedData As String, bitIndex As Long, codeSize As Integer)
+    ' Variable: codeValue stores the working value for code value.
+    Dim codeValue As Long
+    ' Variable: bitStep stores the working value for bit step.
+    Dim bitStep As Integer
+    ' Variable: byteIndex stores the index variable used to address the current item.
+    Dim byteIndex As Long
+    ' Variable: sourceByte stores the working value for source byte.
+    Dim sourceByte As Integer
+    codeValue = 0
+    ' Loop purpose: walk through a byte-oriented range while parsing or transforming packed data.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For bitStep = 0 To codeSize - 1
+        byteIndex = (bitIndex \ 8) + 1
+        If byteIndex > Len(packedData) Then Exit For
+        sourceByte = Asc(Mid$(packedData, byteIndex, 1))
+        If (sourceByte And _ShL(1, bitIndex And 7)) <> 0 Then
+            codeValue = codeValue Or _ShL(1, bitStep)
+        End If
+        bitIndex = bitIndex + 1
+    Next bitStep
+
+    Gif89aReadCode = codeValue
+End Function
+
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A time add.
+' Parameters: baseTime = time-related value used by the current routine; deltaSec = working value for delta sec.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aTimeAdd# (baseTime As Double, deltaSec As Double)
+    ' Variable: resultTime stores the time-related value used by the current routine.
+    Dim resultTime As Double
+
+    ' Add seconds to a TIMER value and wrap across midnight.
+    ' QB64PE should not use the function name inside expressions here.
+    resultTime = baseTime + deltaSec
+    If resultTime >= 86400# Then resultTime = resultTime - 86400#
+
+    Gif89aTimeAdd = resultTime
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A time reached.
+' Parameters: targetTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aTimeReached% (targetTime As Double, currentTime As Double)
+    ' Compare TIMER values safely even when playback crosses midnight.
+    Gif89aTimeReached = 0
+
+    If Abs(currentTime - targetTime) < 43200# Then
+        If currentTime >= targetTime Then Gif89aTimeReached = -1
+    Else
+        If currentTime < targetTime Then Gif89aTimeReached = -1
+    End If
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A time remaining.
+' Parameters: targetTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aTimeRemaining# (targetTime As Double, currentTime As Double)
+    ' Variable: resultTime stores the time-related value used by the current routine.
+    Dim resultTime As Double
+    ' Variable: reachedFlag stores the working value for reached flag.
+    Dim reachedFlag As Integer
+
+    ' Preserve the leftover part of the current frame when pause is pressed.
+    ' Use a local variable so the function name is only assigned at the end.
+    resultTime = 0
+    reachedFlag = Gif89aTimeReached(targetTime, currentTime)
+    If reachedFlag Then
+        Gif89aTimeRemaining = resultTime
+        Exit Function
+    End If
+
+    resultTime = targetTime - currentTime
+    If resultTime < 0 Then resultTime = resultTime + 86400#
+
+    Gif89aTimeRemaining = resultTime
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A elapsed since.
+' Parameters: previousTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aElapsedSince# (previousTime As Double, currentTime As Double)
+    ' Variable: elapsedSec stores the working value for elapsed sec.
+    Dim elapsedSec As Double
+
+    ' Keep the midnight wrap behavior intact while measuring TIMER progress.
+    elapsedSec = currentTime - previousTime
+    If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400#
+
+    Gif89aElapsedSince = elapsedSec
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A clock jump limit.
+' Parameters: gifId = working value for GIF id; previousTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aClockJumpLimit# (gifId As Long, previousTime As Double)
+    ' Variable: limitSec stores the working value for limit sec.
+    Dim limitSec As Double
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+
+    limitSec = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, previousTime)
+    If limitSec <= 0 Then
+        frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+        If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+        limitSec = Gif89aFrames(frameSlot).DelayCs / 100#
+    End If
+
+    ' Allow ordinary frame jitter, but treat large raw TIMER jumps as a resync event.
+    limitSec = limitSec + 1#
+    If limitSec < 2# Then limitSec = 2#
+    If limitSec > 10# Then limitSec = 10#
+
+    Gif89aClockJumpLimit = limitSec
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A clock jumped.
+' Parameters: gifId = working value for GIF id; previousTime = time-related value used by the current routine; currentTime = time-related value used by the current routine.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aClockJumped% (gifId As Long, previousTime As Double, currentTime As Double)
+    ' Variable: jumpFlag stores the working value for jump flag.
+    Dim jumpFlag As Integer
+    ' Variable: elapsedSec stores the working value for elapsed sec.
+    Dim elapsedSec As Double
+    ' Variable: limitSec stores the working value for limit sec.
+    Dim limitSec As Double
+
+    jumpFlag = 0
+    elapsedSec = Gif89aElapsedSince(previousTime, currentTime)
+    limitSec = Gif89aClockJumpLimit(gifId, previousTime)
+    If elapsedSec > limitSec Then jumpFlag = -1
+
+    Gif89aClockJumped = jumpFlag
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A resync after clock jump.
+' Parameters: gifId = working value for GIF id; currentTime = time-related value used by the current routine.
+Sub Gif89aResyncAfterClockJump (gifId As Long, currentTime As Double)
+    ' Variable: delaySec stores the frame delay or timing value.
+    Dim delaySec As Double
+    ' Variable: previousTime stores the time-related value used by the current routine.
+    Dim previousTime As Double
+    ' Variable: frameSlot stores the slot number inside the module-wide storage arrays.
+    Dim frameSlot As Long
+
+    If Gif89aValidId(gifId) = 0 Then Exit Sub
+
+    ' Re-anchor the current frame after a manual clock change or large TIMER discontinuity.
+    previousTime = Gif89aItems(gifId).LastRawTimer
+    delaySec = Gif89aTimeRemaining(Gif89aItems(gifId).NextTick, previousTime)
+    If delaySec <= 0 Then
+        frameSlot = Gif89aItems(gifId).FrameStart + Gif89aItems(gifId).CurrentFrame
+        If frameSlot < Gif89aItems(gifId).FrameStart Then frameSlot = Gif89aItems(gifId).FrameStart
+        delaySec = Gif89aFrames(frameSlot).DelayCs / 100#
+    End If
+
+    Gif89aItems(gifId).NextTick = Gif89aTimeAdd(currentTime, delaySec)
+    Gif89aItems(gifId).LastRawTimer = currentTime
+End Sub
+
+' Purpose: Read structured GIF89A blocks from the file stream.
+' Parameters: rawData = buffer that holds raw, packed, or decoded byte data; ofs = current offset into packed or unpacked data.
+' Return value: the function result follows the success/failure or data-return convention used by this module.
+Function Gif89aReadLoopCountFromAppExt& (rawData As String, ofs As Long)
+    ' Variable: blockLen stores the working value for block len.
+    Dim blockLen As Integer
+    ' Variable: subId stores the working value for sub id.
+    Dim subId As Integer
+    ' Variable: loopCount stores the count used to size or iterate the current data set.
+    Dim loopCount As Long
+
+    Gif89aReadLoopCountFromAppExt = 1
+
+    ' Loop purpose: repeat this block until an internal exit condition decides that the current stage is complete.
+    Do
+        blockLen = Gif89aReadByte(rawData, ofs)
+        If blockLen <= 0 Then Exit Do
+
+        If blockLen = 3 Then
+            subId = Gif89aReadByte(rawData, ofs)
+            loopCount = Gif89aReadWord(rawData, ofs)
+            If subId = 1 Then
+                Gif89aReadLoopCountFromAppExt = loopCount
+            End If
+            If blockLen > 3 Then ofs = ofs + (blockLen - 3)
+        Else
+            ofs = ofs + blockLen
+        End If
+
+        If ofs > Len(rawData) + 1 Then Exit Do
+    Loop
+End Function
+
+' Purpose: Routine for the GIF89A backend: handle GIF89A deinterlace.
+' Parameters: srcIndex = index variable used to address the current item; dstIndex = index variable used to address the current item; frameWidth = width value used by this routine; frameHeight = height value used by this routine.
+Sub Gif89aDeinterlace (srcIndex() As Integer, dstIndex() As Integer, frameWidth As Long, frameHeight As Long)
+    ' Variable: x stores the horizontal pixel or coordinate index.
+    Dim x As Long
+    ' Variable: y stores the vertical pixel or coordinate index.
+    Dim y As Long
+    ' Variable: srcScan stores the working value for src scan.
+    Dim srcScan As Long
+
+    srcScan = 0
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 0 To frameHeight - 1 Step 8
+        ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 4 To frameHeight - 1 Step 8
+        ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 2 To frameHeight - 1 Step 4
+        ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+
+    ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+    ' The loop order matters because later statements expect the data to be visited sequentially.
+    For y = 1 To frameHeight - 1 Step 2
+        ' Loop purpose: iterate through animation frames while building, seeking, or updating playback state.
+        ' The loop order matters because later statements expect the data to be visited sequentially.
+        For x = 0 To frameWidth - 1
+            dstIndex(y * frameWidth + x) = srcIndex(srcScan)
+            srcScan = srcScan + 1
+        Next x
+    Next y
+End Sub
+
